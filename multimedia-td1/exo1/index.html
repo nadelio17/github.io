@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>TD1 — Exo 1 Géolocalisation</title>
+  <style>
+    body{font-family:system-ui,Arial,sans-serif;max-width:800px;margin:24px auto;padding:0 16px}
+    code,pre{background:#f6f6f6;padding:2px 6px;border-radius:4px}
+    .row{display:grid;grid-template-columns:170px 1fr;gap:8px;align-items:center}
+    .actions{margin:12px 0;display:flex;gap:8px;flex-wrap:wrap}
+    .ok{color:green}.err{color:#b00020}
+  </style>
+</head>
+<body>
+  <h1>Exo 1 — Géolocalisation</h1>
+  <p><strong>Note :</strong> la géolocalisation nécessite <em>HTTPS</em> (GitHub Pages) ou <em>localhost</em>.</p>
+
+  <div class="actions">
+    <button id="btn-current">getCurrentPosition()</button>
+    <button id="btn-watch">watchPosition() — démarrer</button>
+    <button id="btn-clear" disabled>watchPosition() — arrêter</button>
+  </div>
+
+  <div id="status"></div>
+  <div id="out">
+    <div class="row"><div>Latitude :</div><div id="lat">—</div></div>
+    <div class="row"><div>Longitude :</div><div id="lng">—</div></div>
+    <div class="row"><div>Altitude :</div><div id="alt">—</div></div>
+    <div class="row"><div>Précision (m) :</div><div id="acc">—</div></div>
+    <div class="row"><div>Vitesse (km/h) :</div><div id="spd">—</div></div>
+    <div class="row"><div>Timestamp :</div><div id="ts">—</div></div>
+    <div class="row"><div>Date locale :</div><div id="date">—</div></div>
+  </div>
+
+<script>
+const s = (id)=>document.getElementById(id);
+let watchId = null;
+
+// Helpers
+function fmt(n, d=6){ return (n==null||isNaN(n)) ? "—" : Number(n).toFixed(d); }
+function setStatus(msg, ok=true){ s('status').innerHTML = `<p class="${ok?'ok':'err'}">${msg}</p>`; }
+
+// Affichage
+function showPosition(pos){
+  const c = pos.coords;
+  s('lat').textContent = fmt(c.latitude, 6);
+  s('lng').textContent = fmt(c.longitude, 6);
+  s('alt').textContent = c.altitude!=null ? fmt(c.altitude, 1) + " m" : "—";
+  s('acc').textContent = c.accuracy!=null ? fmt(c.accuracy, 1) : "—";
+  // vitesse (m/s) -> km/h
+  const kmh = (c.speed!=null && !isNaN(c.speed)) ? (c.speed*3.6) : null;
+  s('spd').textContent = kmh!=null ? fmt(kmh, 1) : "—";
+  const t = pos.timestamp;
+  s('ts').textContent = String(t);
+  s('date').textContent = new Date(t).toLocaleString();
+}
+
+function onGeoError(err){
+  setStatus(`Erreur (${err.code}) : ${err.message}`, false);
+}
+
+// Options : précision max, pas de cache pour voir la diff wifi/4G/GPS
+const opts = { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 };
+
+s('btn-current').onclick = ()=>{
+  navigator.geolocation.getCurrentPosition(
+    (pos)=>{ setStatus("Position récupérée (getCurrentPosition)."); showPosition(pos); },
+    onGeoError,
+    opts
+  );
+};
+
+s('btn-watch').onclick = ()=>{
+  if (watchId!=null) return;
+  watchId = navigator.geolocation.watchPosition(
+    (pos)=>{ setStatus("Mise à jour (watchPosition)."); showPosition(pos); },
+    onGeoError,
+    opts
+  );
+  s('btn-clear').disabled = false;
+  setStatus("watchPosition démarré.");
+};
+
+s('btn-clear').onclick = ()=>{
+  if (watchId!=null){
+    navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+    s('btn-clear').disabled = true;
+    setStatus("watchPosition arrêté.");
+  }
+};
+</script>
+</body>
+</html>
