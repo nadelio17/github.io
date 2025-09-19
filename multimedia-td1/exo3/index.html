@@ -70,6 +70,25 @@ let meAccuracyCircle = null;
 let segMeToMrs = null;
 let routeLayer = null;
 
+// ================== Helper cercle de précision ==================
+function drawAccuracyCircle(latlng, accuracy){
+  // accuracy en mètres (Geolocation API). Fallback visuel si manquant/non valide.
+  const a = Number(accuracy);
+  const r = (Number.isFinite(a) && a > 0) ? a : 50; // 50 m par défaut pour visualiser
+  if (meAccuracyCircle){
+    meAccuracyCircle.setLatLng(latlng).setRadius(r);
+  } else {
+    meAccuracyCircle = L.circle(latlng, {
+      radius: r,
+      color: '#2563eb',
+      fillColor: '#2563eb',
+      fillOpacity: 0.18,
+      weight: 2
+    }).addTo(map);
+    meAccuracyCircle.bringToFront();
+  }
+}
+
 // ================== Distance grand cercle vers Marseille ==================
 function updateDistance(fromLatLng){
   const d = L.latLng(fromLatLng).distanceTo(L.latLng(MARSEILLE));
@@ -88,10 +107,8 @@ if (!navigator.geolocation){
 
     // Marqueur + cercle de précision
     if (meMarker) map.removeLayer(meMarker);
-    if (meAccuracyCircle) map.removeLayer(meAccuracyCircle);
     meMarker = L.marker(meLatLng).addTo(map).bindPopup('Moi').openPopup();
-    meAccuracyCircle = L.circle(meLatLng, {radius: accuracy, color:'#3388ff', fillOpacity:0.1}).addTo(map)
-      .bindPopup(`Précision ≈ ${Math.round(accuracy)} m`);
+    drawAccuracyCircle(meLatLng, accuracy);
 
     // Segment vers Marseille
     if (segMeToMrs) map.removeLayer(segMeToMrs);
@@ -101,6 +118,17 @@ if (!navigator.geolocation){
     map.setView(meLatLng, 13);
     updateDistance(meLatLng);
     setStatus('OK — géoloc, précision, distance et segment tracés.');
+
+    // Suivi temps réel : MAJ cercle, marqueur, segment et distance
+    navigator.geolocation.watchPosition(p=>{
+      const ll = [p.coords.latitude, p.coords.longitude];
+      meLatLng = ll;
+      if (meMarker) meMarker.setLatLng(ll);
+      drawAccuracyCircle(ll, p.coords.accuracy);
+      if (segMeToMrs) segMeToMrs.setLatLngs([ll, MARSEILLE]);
+      updateDistance(ll);
+    }, console.warn, { enableHighAccuracy:true, maximumAge:0, timeout:10000 });
+
   }, (err)=>{
     setStatus(`Erreur géoloc: ${err.message} — fallback Nice.`, false);
     map.setView(NICE, 12);
@@ -126,7 +154,6 @@ function clearRoute(){
 
 // 1) Trajet local (polyline “faite maison”) — côte Nice → Marseille
 function drawLocalRoute(fromLL, toLL){
-  // Petite route manuelle via quelques étapes côtières
   const coastal = [
     fromLL || NICE,
     [43.5528, 7.0174],   // Cannes
@@ -136,6 +163,7 @@ function drawLocalRoute(fromLL, toLL){
     [43.1242, 5.9280],   // Toulon
     toLL || MARSEILLE
   ];
+  clearRoute();
   routeLayer = L.polyline(coastal, {weight:4}).addTo(map);
   map.fitBounds(routeLayer.getBounds(), {padding:[20,20]});
   setStatus('Trajet LOCAL tracé (polyline).');
@@ -145,7 +173,6 @@ function drawLocalRoute(fromLL, toLL){
 async function drawMapQuestRoute(fromLL, toLL){
   try{
     const from = fromLL || NICE, to = toLL || MARSEILLE;
-    // API GET simple (HTTPS requis sur Pages)
     const url = `https://www.mapquestapi.com/directions/v2/route?key=${MAPQUEST_KEY}&from=${from[0]},${from[1]}&to=${to[0]},${to[1]}&outFormat=json&routeType=fastest&doReverseGeocode=false&enhancedNarrative=false&avoidTimedConditions=false`;
     const res = await fetch(url);
     if (!res.ok) throw new Error('HTTP '+res.status);
@@ -153,7 +180,6 @@ async function drawMapQuestRoute(fromLL, toLL){
     const pts = data?.route?.shape?.shapePoints;
     if (!pts || !pts.length) throw new Error('Réponse sans shapePoints');
 
-    // shapePoints = [lat, lng, lat, lng, ...] → pairs [lat,lng]
     const latlngs = [];
     for (let i=0; i<pts.length; i+=2){ latlngs.push([pts[i], pts[i+1]]); }
 
@@ -172,7 +198,6 @@ async function drawMapQuestRoute(fromLL, toLL){
 async function drawMapboxRoute(fromLL, toLL){
   try{
     const from = fromLL || NICE, to = toLL || MARSEILLE;
-    // Mapbox attend lon,lat
     const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${from[1]},${from[0]};${to[1]},${to[0]}?geometries=geojson&overview=full&access_token=${MAPBOX_KEY}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error('HTTP '+res.status);
@@ -180,7 +205,6 @@ async function drawMapboxRoute(fromLL, toLL){
     const coords = data?.routes?.[0]?.geometry?.coordinates;
     if (!coords || !coords.length) throw new Error('Pas de géométrie dans la réponse');
 
-    // coords = [[lon,lat], ...] → [lat,lon]
     const latlngs = coords.map(([lon,lat])=>[lat,lon]);
 
     clearRoute();
@@ -201,9 +225,9 @@ document.getElementById('btnRoute').addEventListener('click', async ()=>{
   const fromLL = meLatLng || NICE;
   const toLL   = MARSEILLE;
 
-  if (src === 'local')       drawLocalRoute(fromLL, toLL);
-  else if (src === 'mapquest') await drawMapQuestRoute(fromLL, toLL);
-  else if (src === 'mapbox')   await drawMapboxRoute(fromLL, toLL);
+  if (src === 'local')          drawLocalRoute(fromLL, toLL);
+  else if (src === 'mapquest')  await drawMapQuestRoute(fromLL, toLL);
+  else if (src === 'mapbox')    await drawMapboxRoute(fromLL, toLL);
 });
 </script>
 </body>
