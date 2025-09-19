@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>TD1 — Exo 2 Leaflet</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    body{font-family:system-ui,Arial,sans-serif;max-width:1000px;margin:24px auto;padding:0 16px}
+    #map{height:520px;margin:12px 0;border-radius:8px;overflow:hidden}
+    .ok{color:green}.err{color:#b00020}
+  </style>
+</head>
+<body>
+<h1>Exo 2 — Leaflet + Géolocalisation</h1>
+<p id="status"></p>
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+function setStatus(msg, ok=true){
+  const el = document.getElementById('status'); el.className = ok?'ok':'err'; el.textContent = msg;
+}
+
+// Coordonnées utiles
+const NICE = [43.7000, 7.2700]; // Nice centre approx
+const BERMUDA = [
+  [25.7617, -80.1918], // Miami
+  [32.3078, -64.7505], // Bermuda
+  [18.4655, -66.1057]  // San Juan
+];
+
+// Carte de secours (si géoloc refuse) : centrée sur Nice
+const map = L.map('map').setView(NICE, 12);
+
+// Tuile OSM (avec attribution)
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+  maxZoom: 19,
+  attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+// Marqueur Nice
+L.marker(NICE).addTo(map).bindPopup('Nice — centre');
+
+// Triangle des Bermudes en rouge
+L.polygon(BERMUDA, {color:'red'}).addTo(map).bindPopup('Triangle des Bermudes');
+
+if (!navigator.geolocation){
+  setStatus('Géolocalisation non supportée', false);
+} else {
+  navigator.geolocation.getCurrentPosition((pos)=>{
+    const {latitude, longitude, accuracy} = pos.coords;
+    const me = [latitude, longitude];
+
+    // Centre et marqueur sur moi
+    map.setView(me, 15);
+    L.marker(me).addTo(map).bindPopup('Moi (position actuelle)').openPopup();
+
+    // Cercle de précision (utile pour l’exo 3 aussi)
+    L.circle(me, {radius: accuracy, color:'#3388ff', fillOpacity:0.1}).addTo(map)
+      .bindPopup(`Précision estimée ≈ ${Math.round(accuracy)} m`);
+
+    setStatus('Position récupérée et affichée ✔️');
+  }, (err)=>{
+    setStatus(`Erreur géoloc: ${err.message}`, false);
+  }, {enableHighAccuracy:true, maximumAge:0, timeout:10000});
+}
+</script>
+</body>
+</html>
