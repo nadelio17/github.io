@@ -3,31 +3,48 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>TD1 — Exo 3 Leaflet+</title>
+  <title>TD1 — Exo 3 Leaflet + Bonus Trajet</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
     body{font-family:system-ui,Arial,sans-serif;max-width:1100px;margin:24px auto;padding:0 16px}
-    #map{height:540px;margin:12px 0;border-radius:8px;overflow:hidden}
-    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+    #map{height:560px;margin:12px 0;border-radius:10px;overflow:hidden}
+    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
     .box{background:#f6f6f6;border-radius:8px;padding:8px 12px}
     .ok{color:green}.err{color:#b00020}
+    label{font-weight:600}
+    select,button{padding:8px 12px;border-radius:8px;border:1px solid #ddd}
+    button{cursor:pointer}
   </style>
 </head>
 <body>
-<h1>Exo 3 — Leaflet avancé</h1>
+<h1>Exo 3 — Leaflet avancé + Bonus Trajet</h1>
+
 <div class="row">
   <span id="status" class="box">Initialisation…</span>
   <span id="dist" class="box">Distance Marseille : —</span>
 </div>
+
+<div class="row">
+  <label for="routeSrc">Source du trajet :</label>
+  <select id="routeSrc">
+    <option value="local">Locale (polyline “faite maison”)</option>
+    <option value="mapquest">MapQuest Directions (API)</option>
+    <option value="mapbox">Mapbox Directions (API)</option>
+  </select>
+  <button id="btnRoute">Tracer le trajet</button>
+</div>
+
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-// Points fixes
-const NICE = [43.7000, 7.2700];
-const MARSEILLE = [43.2965, 5.3698];
+// ================== Constantes et clés (bonus) ==================
+const NICE       = [43.7000, 7.2700];
+const MARSEILLE  = [43.2965, 5.3698];
+const MAPQUEST_KEY = 'tR2C6osuQcc3RoWnxDMXF6FACtNAzMl8';
+const MAPBOX_KEY   = 'pk.eyJ1IjoiY3YwNiIsImEiOiJjajg2MmpzYjcwbWdnMzNsc2NzM2l4eW0yIn0.TfDJipR5II7orUZaC848YA';
 
-// Couches de tuiles (OSM + Stamen Toner Lite ; au besoin, bascule sur OSM si Stamen indispo)
+// ================== Carte + couches ==================
 const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
   maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
 });
@@ -36,71 +53,158 @@ const stamen = L.tileLayer('https://stamen-tiles.a.ssl.fastly.net/toner-lite/{z}
 });
 
 const map = L.map('map', {center: NICE, zoom: 12, layers: [osm]});
-const baseMaps = { "OpenStreetMap": osm, "Stamen Toner Lite": stamen };
-L.control.layers(baseMaps, null, {collapsed:true}).addTo(map);
+L.control.layers({ "OpenStreetMap": osm, "Stamen Toner Lite": stamen }, null, {collapsed:true}).addTo(map);
 
-// Marqueur Marseille
-const m_mrs = L.marker(MARSEILLE).addTo(map).bindPopup('Marseille');
+const statusEl = document.getElementById('status');
+const distEl   = document.getElementById('dist');
+function setStatus(msg, ok=true){ statusEl.className = ok?'box ok':'box err'; statusEl.textContent = msg; }
+function km(m){ return (m/1000).toFixed(2); }
 
-// Utilitaire distance (m) → km
-const km = (m)=> (m/1000).toFixed(2);
+// Points fixes
+const markerMrs = L.marker(MARSEILLE).addTo(map).bindPopup('Marseille');
 
-// Calcule distance affichée
-function showDistance(fromLatLng){
+// Mes éléments dynamiques (réutilisés)
+let meLatLng = null;
+let meMarker = null;
+let meAccuracyCircle = null;
+let segMeToMrs = null;
+let routeLayer = null;
+
+// ================== Distance grand cercle vers Marseille ==================
+function updateDistance(fromLatLng){
   const d = L.latLng(fromLatLng).distanceTo(L.latLng(MARSEILLE));
-  document.getElementById('dist').textContent = `Distance Marseille : ${km(d)} km`;
+  distEl.textContent = `Distance Marseille : ${km(d)} km`;
 }
 
-function setStatus(msg, ok=true){ const el=document.getElementById('status'); el.className = ok?'box ok':'box err'; el.textContent=msg; }
-
+// ================== Géolocalisation ==================
 if (!navigator.geolocation){
-  setStatus('Géolocalisation non supportée', false);
+  setStatus('Géolocalisation non supportée — on reste centré sur Nice.', false);
+  map.setView(NICE, 12);
+  updateDistance(NICE);
 } else {
   navigator.geolocation.getCurrentPosition((pos)=>{
     const {latitude, longitude, accuracy} = pos.coords;
-    const me = [latitude, longitude];
+    meLatLng = [latitude, longitude];
 
-    map.setView(me, 13);
-    const meMarker = L.marker(me).addTo(map).bindPopup('Moi').openPopup();
-
-    // Cercle de précision (taille = accuracy)
-    L.circle(me, {radius: accuracy, color:'#3388ff', fillOpacity:0.1}).addTo(map)
+    // Marqueur + cercle de précision
+    if (meMarker) map.removeLayer(meMarker);
+    if (meAccuracyCircle) map.removeLayer(meAccuracyCircle);
+    meMarker = L.marker(meLatLng).addTo(map).bindPopup('Moi').openPopup();
+    meAccuracyCircle = L.circle(meLatLng, {radius: accuracy, color:'#3388ff', fillOpacity:0.1}).addTo(map)
       .bindPopup(`Précision ≈ ${Math.round(accuracy)} m`);
 
-    // Segment Nice<->Marseille (le TD demande Marseille ↔ "notre position")
-    const seg = L.polyline([me, MARSEILLE], {color:'#f03'}).addTo(map)
+    // Segment vers Marseille
+    if (segMeToMrs) map.removeLayer(segMeToMrs);
+    segMeToMrs = L.polyline([meLatLng, MARSEILLE], {color:'#f03'}).addTo(map)
       .bindPopup('Segment moi ↔ Marseille');
 
-    // Distance
-    showDistance(me);
-    setStatus('OK — fond de carte + précision + distance + segment');
-
-    // Optionnel : surveiller déplacement (watchPosition) pour MAJ distance en temps réel
-    // navigator.geolocation.watchPosition(p=>showDistance([p.coords.latitude, p.coords.longitude]));
-
+    map.setView(meLatLng, 13);
+    updateDistance(meLatLng);
+    setStatus('OK — géoloc, précision, distance et segment tracés.');
   }, (err)=>{
-    setStatus(`Erreur géoloc: ${err.message}`, false);
+    setStatus(`Erreur géoloc: ${err.message} — fallback Nice.`, false);
+    map.setView(NICE, 12);
+    updateDistance(NICE);
   }, {enableHighAccuracy:true, maximumAge:0, timeout:10000});
 }
 
-// ===== Chargement de GeoJSON via API gouvernementale (exemple du cours) =====
-// Exemple: Communes par code postal, géométrie = centre
-// URL type (Ex. 06330, comme sur la slide): la réponse contient la géométrie (centre)
+// ================== GeoJSON API (exemple cours) ==================
 fetch('https://geo.api.gouv.fr/communes?codePostal=06330&fields=nom,code,codesPostaux,codeDepartement,codeRegion,population&format=geojson&geometry=centre')
   .then(r=>r.json())
   .then(geojson=>{
-    const layer = L.geoJSON(geojson, {
+    L.geoJSON(geojson, {
       pointToLayer: (feat, latlng)=> L.circleMarker(latlng, {radius:6, weight:2})
         .bindPopup(`${feat.properties.nom} (${feat.properties.code})`)
     }).addTo(map);
   })
   .catch(e=>console.warn('GeoJSON API error', e));
 
-// ===== Bonus itinéraire (MapQuest/Mapbox) =====
-// Placeholders : renseigne ton token depuis le TD si tu veux tester une route.
-// MapQuest token (fourni dans le TD): tR2C6osuQcc3RoWnxDMXF6FACtNAzMl8
-// Mapbox token (fourni dans le TD): pk.eyJ1IjoiY3YwNiIsImEiOiJjajg2MmpzYjcwbWdnMzNsc2NzM2l4eW0yIn0.TfDJipR5II7orUZaC848YA
-// Astuce : commence par tracer une polyline de points GPS “faits maison”, puis passe à l’API Directions.
+// ================== Bonus Trajet ==================
+function clearRoute(){
+  if (routeLayer){ map.removeLayer(routeLayer); routeLayer = null; }
+}
+
+// 1) Trajet local (polyline “faite maison”) — côte Nice → Marseille
+function drawLocalRoute(fromLL, toLL){
+  // Petite route manuelle via quelques étapes côtières
+  const coastal = [
+    fromLL || NICE,
+    [43.5528, 7.0174],   // Cannes
+    [43.5513, 6.97],     // La Napoule/Théoule approx
+    [43.4233, 6.7684],   // Saint-Raphaël
+    [43.2722, 6.6400],   // Sainte-Maxime / Golfe
+    [43.1242, 5.9280],   // Toulon
+    toLL || MARSEILLE
+  ];
+  routeLayer = L.polyline(coastal, {weight:4}).addTo(map);
+  map.fitBounds(routeLayer.getBounds(), {padding:[20,20]});
+  setStatus('Trajet LOCAL tracé (polyline).');
+}
+
+// 2) Trajet via MapQuest Directions
+async function drawMapQuestRoute(fromLL, toLL){
+  try{
+    const from = fromLL || NICE, to = toLL || MARSEILLE;
+    // API GET simple (HTTPS requis sur Pages)
+    const url = `https://www.mapquestapi.com/directions/v2/route?key=${MAPQUEST_KEY}&from=${from[0]},${from[1]}&to=${to[0]},${to[1]}&outFormat=json&routeType=fastest&doReverseGeocode=false&enhancedNarrative=false&avoidTimedConditions=false`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP '+res.status);
+    const data = await res.json();
+    const pts = data?.route?.shape?.shapePoints;
+    if (!pts || !pts.length) throw new Error('Réponse sans shapePoints');
+
+    // shapePoints = [lat, lng, lat, lng, ...] → pairs [lat,lng]
+    const latlngs = [];
+    for (let i=0; i<pts.length; i+=2){ latlngs.push([pts[i], pts[i+1]]); }
+
+    clearRoute();
+    routeLayer = L.polyline(latlngs, {weight:5}).addTo(map);
+    map.fitBounds(routeLayer.getBounds(), {padding:[20,20]});
+    setStatus('Trajet MAPQUEST tracé.');
+  }catch(e){
+    console.error(e);
+    setStatus('Échec MapQuest — vérifie la clé/HTTPS. Fallback LOCAL.', false);
+    drawLocalRoute(fromLL, toLL);
+  }
+}
+
+// 3) Trajet via Mapbox Directions
+async function drawMapboxRoute(fromLL, toLL){
+  try{
+    const from = fromLL || NICE, to = toLL || MARSEILLE;
+    // Mapbox attend lon,lat
+    const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${from[1]},${from[0]};${to[1]},${to[0]}?geometries=geojson&overview=full&access_token=${MAPBOX_KEY}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP '+res.status);
+    const data = await res.json();
+    const coords = data?.routes?.[0]?.geometry?.coordinates;
+    if (!coords || !coords.length) throw new Error('Pas de géométrie dans la réponse');
+
+    // coords = [[lon,lat], ...] → [lat,lon]
+    const latlngs = coords.map(([lon,lat])=>[lat,lon]);
+
+    clearRoute();
+    routeLayer = L.polyline(latlngs, {weight:5}).addTo(map);
+    map.fitBounds(routeLayer.getBounds(), {padding:[20,20]});
+    setStatus('Trajet MAPBOX tracé.');
+  }catch(e){
+    console.error(e);
+    setStatus('Échec Mapbox — vérifie le token/HTTPS. Fallback LOCAL.', false);
+    drawLocalRoute(fromLL, toLL);
+  }
+}
+
+// Bouton “Tracer le trajet”
+document.getElementById('btnRoute').addEventListener('click', async ()=>{
+  clearRoute();
+  const src = document.getElementById('routeSrc').value;
+  const fromLL = meLatLng || NICE;
+  const toLL   = MARSEILLE;
+
+  if (src === 'local')       drawLocalRoute(fromLL, toLL);
+  else if (src === 'mapquest') await drawMapQuestRoute(fromLL, toLL);
+  else if (src === 'mapbox')   await drawMapboxRoute(fromLL, toLL);
+});
 </script>
 </body>
 </html>
