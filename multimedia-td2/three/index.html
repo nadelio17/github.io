@@ -27,7 +27,6 @@
 <div id="ui">
   <button id="btnStartSensors">Activer capteurs (iOS/Android)</button>
   <button id="btnCalib">Calibrer</button>
-  <button id="btnAutoRot">Auto-rotation cube : OFF</button>
   <button id="btnControlCar">Contrôler la voiture : ON</button>
   <button id="btnToggleRain">Pluie : OFF</button>
 </div>
@@ -39,7 +38,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 // --------- Config ---------
-const MODEL_FILE = './assets/models/porsche.glb'; // adapte si ton fichier a un autre nom
+const MODEL_FILE = './assets/models/porsche.glb'; // adapte si besoin
 
 // --------- Scène de base ---------
 const scene = new THREE.Scene();
@@ -53,7 +52,7 @@ const renderer = new THREE.WebGLRenderer({ antialias:true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;  // ombres douces
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 
 // Lumières
@@ -68,7 +67,6 @@ dir.castShadow = true;
 dir.target.position.set(0, -1, 0);
 scene.add(dir.target);
 scene.add(dir);
-
 dir.shadow.mapSize.set(2048, 2048);
 dir.shadow.camera.near = 0.5;
 dir.shadow.camera.far  = 60;
@@ -89,22 +87,21 @@ ground.position.y = -1;
 ground.receiveShadow = true;
 scene.add(ground);
 
-// --------- Cube volant (texturé) ---------
+// --------- Cube (immobile sauf capteurs) ---------
 const tex = new THREE.TextureLoader().load('./assets/textures/checker.png');
 tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(2,2);
 const cubeMat = new THREE.MeshStandardMaterial({ map: tex, roughness:0.5, metalness:0.1 });
 
 const cubeSize = 1.6;
 const cube = new THREE.Mesh(new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize), cubeMat);
-cube.castShadow = true; cube.receiveShadow = true;
-
-// Position base : à droite (x=+1.5), en l'air (yBase=2.6)
+cube.castShadow = cube.receiveShadow = true;
+// position fixe en hauteur, à droite
 const cubeBase = new THREE.Vector3(1.5, 2.6, 0);
 cube.position.copy(cubeBase);
 scene.add(cube);
 
 // --------- Helper placement modèle au sol ---------
-function centerScalePlaceOnGround(object3D, targetMaxDim = 5, targetX = -1.5, targetZ = 0) {
+function centerScalePlaceOnGround(object3D, targetMaxDim = 5) {
   const box = new THREE.Box3().setFromObject(object3D);
   const size = new THREE.Vector3(); box.getSize(size);
   const maxDim = Math.max(size.x, size.y, size.z) || 1;
@@ -112,30 +109,35 @@ function centerScalePlaceOnGround(object3D, targetMaxDim = 5, targetX = -1.5, ta
 
   const box2 = new THREE.Box3().setFromObject(object3D);
   const center2 = new THREE.Vector3(); box2.getCenter(center2);
-  const dy = (-1) - box2.min.y; // poser au sol (sol à y=-1)
-
-  object3D.position.set(
-    object3D.position.x + (targetX - center2.x),
-    object3D.position.y + dy,
-    object3D.position.z + (targetZ - center2.z)
-  );
+  const dy = (-1) - box2.min.y; // poser au sol
+  object3D.position.add(new THREE.Vector3(-center2.x, dy, -center2.z));
 }
 
-// --------- Modèle GLTF (Porsche) ---------
-let gltfModel = null;
+// --------- Modèle GLTF (Porsche) via un groupe wrapper ---------
+let carGroup = null;
 let carBase = null;
 
 new GLTFLoader().load(MODEL_FILE, (gltf)=>{
-  gltfModel = gltf.scene;
-  gltfModel.traverse(n => { if (n.isMesh) { n.castShadow = true; n.receiveShadow = true; }});
+  const model = gltf.scene;
 
-  // Couleur : vert clair si tu veux tout vert (décommente si souhaité)
+  // Tout vert clair ? décommente si voulu
   // const greenMat = new THREE.MeshStandardMaterial({ color: 0x90EE90, metalness:0.2, roughness:0.4 });
-  // gltfModel.traverse(n=>{ if(n.isMesh) n.material = greenMat; });
+  // model.traverse(n => { if (n.isMesh) n.material = greenMat; });
 
-  centerScalePlaceOnGround(gltfModel, 5, -1.5, 0); // à gauche, posé au sol
-  carBase = gltfModel.position.clone();
-  scene.add(gltfModel);
+  model.traverse(n => { if (n.isMesh) { n.castShadow = true; n.receiveShadow = true; }});
+  centerScalePlaceOnGround(model, 5);
+
+  // Crée un wrapper pour animer facilement la voiture
+  carGroup = new THREE.Group();
+  // Place le groupe près du cube (à gauche)
+  carGroup.position.set(-1.5, -1, 0); // y=-1 = sol
+  carGroup.add(model);
+  // Replace le modèle au centre du groupe
+  model.position.set(0, 0, 0);
+  model.rotation.set(0, 0, 0);
+
+  scene.add(carGroup);
+  carBase = carGroup.position.clone();
 }, undefined, (e)=>console.warn('GLTF non chargé:', e));
 
 // --------- Pluie (points) ---------
@@ -162,10 +164,6 @@ controls.enableDamping = true;
 const btnRain = document.getElementById('btnToggleRain');
 btnRain.onclick = ()=>{ rainEnabled = !rainEnabled; btnRain.textContent = `Pluie : ${rainEnabled?'ON':'OFF'}`; };
 
-let autoRotateCube = false;
-const btnAuto = document.getElementById('btnAutoRot');
-btnAuto.onclick = ()=>{ autoRotateCube = !autoRotateCube; btnAuto.textContent = `Auto-rotation cube : ${autoRotateCube?'ON':'OFF'}`; };
-
 let controlCar = true;
 const btnCar = document.getElementById('btnControlCar');
 btnCar.onclick = ()=>{ controlCar = !controlCar; btnCar.textContent = `Contrôler la voiture : ${controlCar?'ON':'OFF'}`; };
@@ -174,9 +172,9 @@ btnCar.onclick = ()=>{ controlCar = !controlCar; btnCar.textContent = `Contrôle
 let alpha=0, beta=0, gamma=0, ax=0, ay=0, az=0;
 let sensorsActive = false;
 
-const calib = { beta:0, gamma:0 };            // offset neutre
-const smooth = { beta:0, gamma:0 };           // valeurs lissées (radians)
-const SMOOTH = 0.15;                           // 0..1 (plus grand = suit plus vite)
+const calib = { beta:0, gamma:0 };         // offset neutre
+const smooth = { beta:0, gamma:0 };        // valeurs lissées (radians)
+const SMOOTH = 0.15;
 
 document.getElementById('btnStartSensors').onclick = requestSensors;
 document.getElementById('btnCalib').onclick = ()=>{ calib.beta = beta; calib.gamma = gamma; };
@@ -189,9 +187,7 @@ function requestSensors(){
       if (state === 'granted'){ attachSensors(); sensorsActive = true; }
       else alert('Permission capteurs refusée.');
     }).catch(console.warn);
-  } else {
-    attachSensors(); sensorsActive = true;
-  }
+  } else { attachSensors(); sensorsActive = true; }
 }
 function attachSensors(){
   addEventListener('deviceorientation', (e)=>{ alpha=e.alpha??0; beta=e.beta??0; gamma=e.gamma??0; }, true);
@@ -222,32 +218,17 @@ renderer.setAnimationLoop(()=>{
   smooth.beta = THREE.MathUtils.lerp(smooth.beta, b, SMOOTH);
   smooth.gamma= THREE.MathUtils.lerp(smooth.gamma,g, SMOOTH);
 
-  // Cube : contrôle clair -> pas de rotation auto sauf si ON
+  // Cube : contrôle uniquement via capteurs (aucune auto-rotation ni "hover")
   cube.rotation.x = smooth.beta * 0.7;
   cube.rotation.y = smooth.gamma* 0.7;
-  if (autoRotateCube) cube.rotation.z += 0.01;
+  cube.position.copy(cubeBase);
 
-  // Survol sinus + légère influence accélération
-  const t = performance.now()*0.002;
-  const amplitude = 0.7 + Math.abs(ax)*0.05;
-  cube.position.y = cubeBase.y + Math.sin(t) * amplitude;
-
-  // Voiture : orientation + léger déplacement latéral si capteurs actifs
-  if (gltfModel){
+  // Voiture : rotation + léger décalage latéral via capteurs
+  if (carGroup){
     if (controlCar && sensorsActive){
-      // yaw par γ, pitch léger par β
-      gltfModel.rotation.y = smooth.gamma * 1.0;
-      gltfModel.rotation.x = smooth.beta  * 0.3;
-
-      if (carBase){
-        const dx = THREE.MathUtils.clamp(smooth.gamma * 1.2, -0.6, 0.6);
-        gltfModel.position.x = carBase.x + dx;
-        gltfModel.position.y = carBase.y;  // reste au sol
-        gltfModel.position.z = carBase.z;
-      }
-    } else {
-      // animation d'attente quand capteurs inactifs
-      gltfModel.rotation.y += 0.004;
+      carGroup.rotation.set(smooth.beta * 0.3, smooth.gamma * 1.0, 0); // pitch léger, yaw clair
+      const dx = THREE.MathUtils.clamp(smooth.gamma * 1.2, -0.6, 0.6);
+      carGroup.position.set(carBase.x + dx, carBase.y, carBase.z);
     }
   }
 
