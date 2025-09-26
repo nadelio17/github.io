@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TD2 — Exo 2 Babylon.js (capteurs + GLB + particules)</title>
+  <style>
+    html,body{height:100%;margin:0;background:#0f1116}
+    #ui{position:fixed;inset:12px auto auto 12px;z-index:10;display:flex;gap:8px;flex-wrap:wrap}
+    #ui button{padding:8px 12px;border-radius:8px;border:1px solid #444;background:#1f2937;color:#fff;cursor:pointer}
+    #log{position:fixed;right:12px;top:12px;background:#111827cc;padding:8px 12px;border-radius:8px;font-size:12px;color:#e5e7eb}
+    canvas{width:100%;height:100%}
+  </style>
+  <script src="https://cdn.babylonjs.com/babylon.js"></script>
+  <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
+</head>
+<body>
+<div id="ui">
+  <button id="btnStartSensors">Activer capteurs</button>
+  <button id="btnCalib">Calibrer</button>
+  <button id="btnControlCar">Contrôler la voiture : ON</button>
+  <button id="btnRain">Pluie : OFF</button>
+  <button id="btnGreen">Voiture verte : OFF</button>
+</div>
+<div id="log">α: — β: — γ: — | ax: — ay: — az: —</div>
+<canvas id="renderCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById("renderCanvas");
+const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer:true, stencil:true });
+
+// --- Scene ---
+const scene = new BABYLON.Scene(engine);
+scene.clearColor = new BABYLON.Color3(0.06,0.07,0.09);
+
+// Camera
+const camera = new BABYLON.ArcRotateCamera("cam",
+  -Math.PI/2, Math.PI/3, 14, BABYLON.Vector3.Zero(), scene);
+camera.attachControl(canvas, true);
+
+// Lights + soft shadows
+const hemi = new BABYLON.HemisphericLight("hemi", new BABYLON.Vector3(0,1,0), scene);
+hemi.intensity = 0.6;
+const dir = new BABYLON.DirectionalLight("dir", new BABYLON.Vector3(-1,-2,-1), scene);
+dir.position = new BABYLON.Vector3(10,15,8);
+dir.intensity = 1.0;
+const sh = new BABYLON.ShadowGenerator(2048, dir);
+sh.usePoissonSampling = true;
+
+// Ground (y = -1)
+const ground = BABYLON.MeshBuilder.CreateGround("ground", {width:200, height:200}, scene);
+ground.position.y = -1;
+const gMat = new BABYLON.StandardMaterial("gMat", scene);
+gMat.diffuseColor = new BABYLON.Color3(0.11,0.15,0.20);
+ground.material = gMat;
+ground.receiveShadows = true;
+
+// --- Cube en hauteur, immobile sauf capteurs ---
+const box = BABYLON.MeshBuilder.CreateBox("box", {size:1.6}, scene);
+box.position = new BABYLON.Vector3(1.5, 2.6, 0);
+const tex = new BABYLON.StandardMaterial("tex", scene);
+tex.diffuseTexture = new BABYLON.Texture("./assets/textures/checker.png", scene);
+tex.specularColor = new BABYLON.Color3(0.1,0.1,0.1);
+box.material = tex;
+box.receiveShadows = true; box.castShadow = true;
+sh.addShadowCaster(box);
+
+// --- Helper: scale/centrer/poser au sol un nœud ---
+function centerScalePlaceOnGround(node, targetMax=5, targetX=-1.5, targetZ=0){
+  node.computeWorldMatrix(true);
+  const meshes = node.getChildMeshes();
+  if (meshes.length === 0) return;
+
+  // 1) min/max monde
+  let min = new BABYLON.Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
+  let max = new BABYLON.Vector3(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY);
+  meshes.forEach(m=>{
+    const b = m.getBoundingInfo().boundingBox;
+    min = BABYLON.Vector3.Minimize(min, b.minimumWorld);
+    max = BABYLON.Vector3.Maximize(max, b.maximumWorld);
+  });
+  const size = max.subtract(min);
+  const maxDim = Math.max(size.x, size.y, size.z) || 1;
+
+  // 2) scale uniforme
+  const s = targetMax / maxDim;
+  node.scaling = new BABYLON.Vector3(s,s,s);
+  node.computeWorldMatrix(true);
+
+  // 3) recompute bounds after scale
+  min = new BABYLON.Vector3( Infinity,  Infinity,  Infinity);
+  max = new BABYLON.Vector3(-Infinity, -Infinity, -Infinity);
+  meshes.forEach(m=>{
+    const b = m.getBoundingInfo().boundingBox;
+    min = BABYLON.Vector3.Minimize(min, b.minimumWorld);
+    max = BABYLON.Vector3.Maximize(max, b.maximumWorld);
+  });
+  const center = min.add(max).scale(0.5);
+
+  // 4) poser au sol (y = -1) & rapprocher du cube
+  const dy = (-1) - min.y;
+  node.position.addInPlace(new BABYLON.Vector3(targetX - center.x, dy, targetZ - center.z));
+  node.computeWorldMatrix(true);
+}
+
+// --- Modèle GLB (Porsche) dans un wrapper pour l’animer proprement ---
+const MODEL_FILE = "porsche.glb"; // mets "duck.glb" si besoin
+let carRoot = new BABYLON.TransformNode("carRoot", scene);
+let carBase = null;
+let carMeshes = [];
+let carIsGreen = false;
+let greenMat = new BABYLON.StandardMaterial("greenMat", scene);
+greenMat.diffuseColor = BABYLON.Color3.FromHexString("#90EE90");
+greenMat.specularColor = new BABYLON.Color3(0.1,0.1,0.1);
+let originalMats = new Map();
+
+BABYLON.SceneLoader.ImportMesh("", "./assets/models/", MODEL_FILE, scene, (meshes)=>{
+  meshes.forEach(m=>{
+    if (m instanceof BABYLON.Mesh){
+      m.parent = carRoot;
+      m.receiveShadows = true; m.castShadow = true;
+      sh.addShadowCaster(m);
+      carMeshes.push(m);
+    }
+  });
+  centerScalePlaceOnGround(carRoot, 5, -1.5, 0);
+  carBase = carRoot.position.clone();
+});
+
+// --- Switch “voiture verte” ---
+document.getElementById('btnGreen').onclick = ()=>{
+  carIsGreen = !carIsGreen;
+  const label = `Voiture verte : ${carIsGreen?'ON':'OFF'}`;
+  document.getElementById('btnGreen').textContent = label;
+  if (!carMeshes.length) return;
+  if (carIsGreen){
+    carMeshes.forEach(m=>{
+      if (!originalMats.has(m)) originalMats.set(m, m.material);
+      m.material = greenMat;
+    });
+  }else{
+    carMeshes.forEach(m=>{
+      if (originalMats.has(m)) m.material = originalMats.get(m);
+    });
+  }
+};
+
+// --- Pluie ---
+const ps = new BABYLON.ParticleSystem("rain", 2000, scene);
+ps.particleTexture = new BABYLON.Texture("https://assets.babylonjs.com/textures/flare.png", scene);
+ps.emitter = new BABYLON.Vector3(0, 30, 0);
+ps.minEmitBox = new BABYLON.Vector3(-40, 0, -40);
+ps.maxEmitBox = new BABYLON.Vector3( 40, 0,  40);
+ps.color1 = new BABYLON.Color4(0.6,0.8,1.0,0.8);
+ps.color2 = new BABYLON.Color4(0.6,0.8,1.0,0.8);
+ps.gravity = new BABYLON.Vector3(0, -9.8, 0);
+ps.direction1 = new BABYLON.Vector3(0, -1, 0);
+ps.direction2 = new BABYLON.Vector3(0, -1, 0);
+ps.minSize = 0.05; ps.maxSize = 0.2;
+ps.emitRate = 1600;
+let rainOn = false;
+document.getElementById('btnRain').onclick = ()=>{
+  rainOn = !rainOn;
+  document.getElementById('btnRain').textContent = `Pluie : ${rainOn?'ON':'OFF'}`;
+  if (rainOn) ps.start(); else ps.stop();
+};
+
+// --- Capteurs + calibrage + lissage ---
+let alpha=0, beta=0, gamma=0, ax=0, ay=0, az=0;
+let sensorsActive = false;
+const calib = { beta:0, gamma:0 };
+const smooth = { beta:0, gamma:0 };
+const SMOOTH = 0.15;
+
+document.getElementById('btnStartSensors').onclick = ()=>{
+  const needPerm = typeof(DeviceOrientationEvent) !== 'undefined'
+    && typeof DeviceOrientationEvent.requestPermission === 'function';
+  if (needPerm){
+    DeviceOrientationEvent.requestPermission().then(state=>{
+      if (state === 'granted'){ attachSensors(); sensorsActive = true; }
+      else alert('Permission capteurs refusée.');
+    }).catch(console.warn);
+  } else { attachSensors(); sensorsActive = true; }
+};
+
+document.getElementById('btnCalib').onclick = ()=>{ calib.beta = beta; calib.gamma = gamma; };
+
+function attachSensors(){
+  window.addEventListener('deviceorientation', (e)=>{
+    alpha = e.alpha ?? 0; beta = e.beta ?? 0; gamma = e.gamma ?? 0;
+  }, true);
+  window.addEventListener('devicemotion', (e)=>{
+    ax = e.accelerationIncludingGravity?.x ?? 0;
+    ay = e.accelerationIncludingGravity?.y ?? 0;
+    az = e.accelerationIncludingGravity?.z ?? 0;
+  }, true);
+}
+
+const logEl = document.getElementById('log');
+function updateLog(){
+  logEl.textContent = `α:${alpha.toFixed(0)} β:${beta.toFixed(0)} γ:${gamma.toFixed(0)} | ax:${ax.toFixed(1)} ay:${ay.toFixed(1)} az:${az.toFixed(1)}`;
+}
+
+// --- Contrôle voiture ON/OFF ---
+let controlCar = true;
+document.getElementById('btnControlCar').onclick = ()=>{
+  controlCar = !controlCar;
+  document.getElementById('btnControlCar').textContent = `Contrôler la voiture : ${controlCar?'ON':'OFF'}`;
+};
+
+// --- Loop ---
+engine.runRenderLoop(()=>{
+  // angles en radians (après calibrage) + lissage
+  const b = BABYLON.Tools.ToRadians(beta - calib.beta);
+  const g = BABYLON.Tools.ToRadians(gamma - calib.gamma);
+  smooth.beta = BABYLON.Scalar.Lerp(smooth.beta, b, SMOOTH);
+  smooth.gamma= BABYLON.Scalar.Lerp(smooth.gamma,g, SMOOTH);
+
+  // Cube : contrôle clair, pas d'auto-anim
+  box.rotation.x = smooth.beta * 0.7;
+  box.rotation.y = smooth.gamma* 0.7;
+  box.position.y = 2.6; // reste en hauteur, sans “hover”
+
+  // Voiture via wrapper (carRoot)
+  if (carRoot && carBase && controlCar && sensorsActive){
+    carRoot.rotation.x = smooth.beta * 0.3;  // pitch léger
+    carRoot.rotation.y = smooth.gamma* 1.0;  // yaw plus visible
+    const dx = BABYLON.Scalar.Clamp(smooth.gamma * 1.2, -0.6, 0.6);
+    carRoot.position.x = carBase.x + dx;     // petit décalage latéral
+  }
+
+  updateLog();
+  scene.render();
+});
+
+window.addEventListener("resize", ()=> engine.resize());
+</script>
+</body>
+</html>
