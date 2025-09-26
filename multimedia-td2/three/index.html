@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>TD2 — Exo 1 Three.js (capteurs + GLTF + particules)</title>
+  <style>
+    html,body{height:100%;margin:0}
+    body{font-family:system-ui,Arial,sans-serif;background:#0f1116;color:#e5e7eb}
+    #ui{position:fixed;inset:12px auto auto 12px;z-index:10;display:flex;gap:8px;flex-wrap:wrap}
+    #ui button{padding:8px 12px;border-radius:8px;border:1px solid #444;background:#1f2937;color:#fff;cursor:pointer}
+    #log{position:fixed;right:12px;top:12px;background:#111827cc;padding:8px 12px;border-radius:8px;font-size:12px}
+    canvas{display:block}
+  </style>
+
+  <!-- Import map pour résoudre "three" et ses addons -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/examples/jsm/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+<div id="ui">
+  <button id="btnStartSensors">Activer capteurs (iOS/Android)</button>
+  <button id="btnToggleRain">Activer/Désactiver pluie</button>
+</div>
+<div id="log">α: — β: — γ: — | ax: — ay: — az: —</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+
+// --------- Config ---------
+const MODEL_FILE = './assets/models/porsche.glb'; // adapte si ton fichier a un autre nom
+
+// --------- Scène de base ---------
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0f1116);
+scene.fog = new THREE.Fog(0x0f1116, 30, 120);
+
+const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 500);
+camera.position.set(8, 5, 14);
+
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;  // ombres douces
+document.body.appendChild(renderer.domElement);
+
+// Lumières
+const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+scene.add(ambient);
+const hemi = new THREE.HemisphereLight(0xffffff, 0x223344, 0.5);
+scene.add(hemi);
+
+const dir = new THREE.DirectionalLight(0xffffff, 1.0);
+dir.position.set(10, 15, 8);
+dir.castShadow = true;
+dir.target.position.set(0, -1, 0); // vise la scène (proche du sol)
+scene.add(dir.target);
+scene.add(dir);
+
+// Réglage de la caméra d’ombre pour éviter la « dalle » rectangulaire
+dir.shadow.mapSize.set(2048, 2048);
+dir.shadow.camera.near = 0.5;
+dir.shadow.camera.far  = 60;
+dir.shadow.camera.left   = -20;
+dir.shadow.camera.right  =  20;
+dir.shadow.camera.top    =  20;
+dir.shadow.camera.bottom = -20;
+dir.shadow.bias = -0.0003;
+dir.shadow.normalBias = 0.02;
+
+// Sol (y = -1)
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(200, 200),
+  new THREE.MeshStandardMaterial({ color:0x1c2431, roughness:0.9, metalness:0.0 })
+);
+ground.rotation.x = -Math.PI/2;
+ground.position.y = -1;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// --------- Cube volant (texturé) ---------
+const tex = new THREE.TextureLoader().load('./assets/textures/checker.png');
+tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(2,2);
+const cubeMat = new THREE.MeshStandardMaterial({ map: tex, roughness:0.5, metalness:0.1 });
+
+const cubeSize = 1.6; // un peu plus petit que 2
+const cube = new THREE.Mesh(new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize), cubeMat);
+cube.castShadow = true; cube.receiveShadow = true;
+
+// Position base : à droite (x=+1.5), en l'air (yBase=2.6)
+const cubeBase = new THREE.Vector3(1.5, 2.6, 0);
+cube.position.copy(cubeBase);
+scene.add(cube);
+
+// --------- Helper placement modèle au sol ---------
+function centerScalePlaceOnGround(object3D, targetMaxDim = 5, targetX = -1.5, targetZ = 0) {
+  // Scale pour que la dimension max = targetMaxDim
+  const box = new THREE.Box3().setFromObject(object3D);
+  const size = new THREE.Vector3(); box.getSize(size);
+  const maxDim = Math.max(size.x, size.y, size.z) || 1;
+  object3D.scale.setScalar(targetMaxDim / maxDim);
+
+  // Recalcule bbox après scale
+  const box2 = new THREE.Box3().setFromObject(object3D);
+  const center2 = new THREE.Vector3(); box2.getCenter(center2);
+  const dy = (-1) - box2.min.y; // poser au sol (sol à y=-1)
+
+  // Aligner et rapprocher du cube
+  object3D.position.set(
+    object3D.position.x + (targetX - center2.x),
+    object3D.position.y + dy,
+    object3D.position.z + (targetZ - center2.z)
+  );
+}
+
+// --------- Modèle GLTF (Porsche) ---------
+let gltfModel = null;
+
+new GLTFLoader().load(MODEL_FILE, (gltf)=>{
+  gltfModel = gltf.scene;
+  gltfModel.traverse(n => { if (n.isMesh) { n.castShadow = true; n.receiveShadow = true; }});
+  // Plus grand (~5u), proche du cube à gauche
+  centerScalePlaceOnGround(gltfModel, 5, -1.5, 0);
+  scene.add(gltfModel);
+}, undefined, (e)=>console.warn('GLTF non chargé:', e));
+
+// --------- Pluie (points) ---------
+let rainPoints = null, rainEnabled = false;
+(function buildRain(){
+  const COUNT = 1200;
+  const geo = new THREE.BufferGeometry();
+  const pos = new Float32Array(COUNT*3);
+  for (let i=0;i<COUNT;i++){
+    pos[3*i+0] = (Math.random()-0.5)*80;
+    pos[3*i+1] = Math.random()*60 + 5;
+    pos[3*i+2] = (Math.random()-0.5)*80;
+  }
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const pmat = new THREE.PointsMaterial({ size:0.08 });
+  rainPoints = new THREE.Points(geo, pmat);
+  scene.add(rainPoints);
+})();
+
+// --------- Contrôles & UI ---------
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+document.getElementById('btnToggleRain').onclick = ()=>{ rainEnabled = !rainEnabled; };
+
+// --------- Capteurs ---------
+let alpha=0, beta=0, gamma=0, ax=0, ay=0, az=0;
+const logEl = document.getElementById('log');
+
+document.getElementById('btnStartSensors').onclick = requestSensors;
+
+function requestSensors(){
+  const needPerm = typeof(DeviceOrientationEvent) !== 'undefined'
+    && typeof DeviceOrientationEvent.requestPermission === 'function';
+  if (needPerm){
+    DeviceOrientationEvent.requestPermission().then(state=>{
+      if (state === 'granted') attachSensors();
+      else alert('Permission capteurs refusée.');
+    }).catch(console.warn);
+  } else {
+    attachSensors();
+  }
+}
+function attachSensors(){
+  addEventListener('deviceorientation', (e)=>{ alpha=e.alpha??0; beta=e.beta??0; gamma=e.gamma??0; }, true);
+  addEventListener('devicemotion', (e)=>{
+    ax = e.accelerationIncludingGravity?.x ?? 0;
+    ay = e.accelerationIncludingGravity?.y ?? 0;
+    az = e.accelerationIncludingGravity?.z ?? 0;
+  }, true);
+}
+
+function updateLog(){
+  logEl.textContent = `α:${alpha.toFixed(0)} β:${beta.toFixed(0)} γ:${gamma.toFixed(0)} | ax:${ax.toFixed(1)} ay:${ay.toFixed(1)} az:${az.toFixed(1)}`;
+}
+
+// --------- Resize ---------
+addEventListener('resize', ()=>{
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// --------- Animation ---------
+renderer.setAnimationLoop(()=>{
+  // Cube volant : rotation via capteurs + survol sinus
+  cube.rotation.x = THREE.MathUtils.degToRad(beta) * 0.5;
+  cube.rotation.y = THREE.MathUtils.degToRad(gamma) * 0.5;
+  cube.rotation.z += 0.01;
+
+  const t = performance.now()*0.002;
+  const amplitude = 0.7 + Math.abs(ax)*0.05; // léger effet capteurs
+  cube.position.y = cubeBase.y + Math.sin(t) * amplitude;
+
+  // Petite vie du modèle
+  if (gltfModel){
+    gltfModel.rotation.y += 0.004;
+  }
+
+  // Pluie
+  if (rainPoints && rainEnabled){
+    const pos = rainPoints.geometry.attributes.position;
+    for (let i=0;i<pos.count;i++){
+      let y = pos.getY(i) - (0.15 + Math.random()*0.15);
+      if (y < 0) y = 60;
+      pos.setY(i, y);
+    }
+    pos.needsUpdate = true;
+  }
+
+  controls.update();
+  updateLog();
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>
