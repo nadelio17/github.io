@@ -65,15 +65,15 @@ box.material = tex;
 box.receiveShadows = true; box.castShadow = true;
 sh.addShadowCaster(box);
 
-// --- Helper: scale/centrer/poser au sol un nœud ---
+// --- Helper: scale/centrer/poser au sol un nœud (et ses enfants) ---
 function centerScalePlaceOnGround(node, targetMax=5, targetX=-1.5, targetZ=0){
   node.computeWorldMatrix(true);
   const meshes = node.getChildMeshes();
   if (meshes.length === 0) return;
 
-  // 1) min/max monde
-  let min = new BABYLON.Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
-  let max = new BABYLON.Vector3(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY);
+  // BBox monde
+  let min = new BABYLON.Vector3( Infinity,  Infinity,  Infinity);
+  let max = new BABYLON.Vector3(-Infinity, -Infinity, -Infinity);
   meshes.forEach(m=>{
     const b = m.getBoundingInfo().boundingBox;
     min = BABYLON.Vector3.Minimize(min, b.minimumWorld);
@@ -82,14 +82,14 @@ function centerScalePlaceOnGround(node, targetMax=5, targetX=-1.5, targetZ=0){
   const size = max.subtract(min);
   const maxDim = Math.max(size.x, size.y, size.z) || 1;
 
-  // 2) scale uniforme
+  // Scale uniforme
   const s = targetMax / maxDim;
   node.scaling = new BABYLON.Vector3(s,s,s);
   node.computeWorldMatrix(true);
 
-  // 3) recompute bounds after scale
-  min = new BABYLON.Vector3( Infinity,  Infinity,  Infinity);
-  max = new BABYLON.Vector3(-Infinity, -Infinity, -Infinity);
+  // Recompute bounds after scale
+  min.copyFromFloats( Infinity,  Infinity,  Infinity);
+  max.copyFromFloats(-Infinity, -Infinity, -Infinity);
   meshes.forEach(m=>{
     const b = m.getBoundingInfo().boundingBox;
     min = BABYLON.Vector3.Minimize(min, b.minimumWorld);
@@ -97,41 +97,51 @@ function centerScalePlaceOnGround(node, targetMax=5, targetX=-1.5, targetZ=0){
   });
   const center = min.add(max).scale(0.5);
 
-  // 4) poser au sol (y = -1) & rapprocher du cube
+  // Poser au sol y=-1 + rapprocher du cube
   const dy = (-1) - min.y;
   node.position.addInPlace(new BABYLON.Vector3(targetX - center.x, dy, targetZ - center.z));
   node.computeWorldMatrix(true);
 }
 
-// --- Modèle GLB (Porsche) dans un wrapper pour l’animer proprement ---
-const MODEL_FILE = "porsche.glb"; // mets "duck.glb" si besoin
-let carRoot = new BABYLON.TransformNode("carRoot", scene);
+// --- Modèle GLB (Porsche) dans un wrapper propre ---
+// IMPORTANT: on parent **le root glTF** au wrapper, pas chaque mesh séparément
+const MODEL_FILE = "porsche.glb"; // adapte si besoin
+const carRoot = new BABYLON.TransformNode("carRoot", scene);
 let carBase = null;
 let carMeshes = [];
 let carIsGreen = false;
-let greenMat = new BABYLON.StandardMaterial("greenMat", scene);
+
+const greenMat = new BABYLON.StandardMaterial("greenMat", scene);
 greenMat.diffuseColor = BABYLON.Color3.FromHexString("#90EE90");
 greenMat.specularColor = new BABYLON.Color3(0.1,0.1,0.1);
-let originalMats = new Map();
+const originalMats = new Map();
 
-BABYLON.SceneLoader.ImportMesh("", "./assets/models/", MODEL_FILE, scene, (meshes)=>{
-  meshes.forEach(m=>{
-    if (m instanceof BABYLON.Mesh){
-      m.parent = carRoot;
-      m.receiveShadows = true; m.castShadow = true;
-      sh.addShadowCaster(m);
-      carMeshes.push(m);
-    }
-  });
+(async function loadCar(){
+  const result = await BABYLON.SceneLoader.ImportMeshAsync(null, "./assets/models/", MODEL_FILE, scene);
+
+  // Cherche le vrai root glTF
+  // glTF charge souvent un nœud "__root__"
+  const rootNode =
+    result.transformNodes?.find(n=>n.name==="__root__") ||
+    result.meshes?.find(m=>m.name==="__root__") ||
+    result.meshes[0];
+
+  // Parentage: on attache LE ROOT au wrapper (carRoot)
+  rootNode.setParent(carRoot);
+
+  // Ombres & liste des meshes (après parentage)
+  carMeshes = carRoot.getChildMeshes();
+  carMeshes.forEach(m=>{ m.receiveShadows = true; m.castShadow = true; sh.addShadowCaster(m); });
+
+  // Mise à l'échelle et placement **du wrapper** complet
   centerScalePlaceOnGround(carRoot, 5, -1.5, 0);
   carBase = carRoot.position.clone();
-});
+})().catch(e=>console.warn("GLB load error:", e));
 
 // --- Switch “voiture verte” ---
 document.getElementById('btnGreen').onclick = ()=>{
   carIsGreen = !carIsGreen;
-  const label = `Voiture verte : ${carIsGreen?'ON':'OFF'}`;
-  document.getElementById('btnGreen').textContent = label;
+  document.getElementById('btnGreen').textContent = `Voiture verte : ${carIsGreen?'ON':'OFF'}`;
   if (!carMeshes.length) return;
   if (carIsGreen){
     carMeshes.forEach(m=>{
@@ -216,15 +226,15 @@ engine.runRenderLoop(()=>{
   smooth.beta = BABYLON.Scalar.Lerp(smooth.beta, b, SMOOTH);
   smooth.gamma= BABYLON.Scalar.Lerp(smooth.gamma,g, SMOOTH);
 
-  // Cube : contrôle clair, pas d'auto-anim
+  // Cube (uniquement capteurs, pas d'auto-anim)
   box.rotation.x = smooth.beta * 0.7;
   box.rotation.y = smooth.gamma* 0.7;
-  box.position.y = 2.6; // reste en hauteur, sans “hover”
+  box.position.y = 2.6;
 
   // Voiture via wrapper (carRoot)
   if (carRoot && carBase && controlCar && sensorsActive){
     carRoot.rotation.x = smooth.beta * 0.3;  // pitch léger
-    carRoot.rotation.y = smooth.gamma* 1.0;  // yaw plus visible
+    carRoot.rotation.y = smooth.gamma* 1.0;  // yaw visible
     const dx = BABYLON.Scalar.Clamp(smooth.gamma * 1.2, -0.6, 0.6);
     carRoot.position.x = carBase.x + dx;     // petit décalage latéral
   }
