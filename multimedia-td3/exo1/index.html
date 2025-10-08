@@ -2,23 +2,20 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <title>Ex1 - Terre 3D + Leaflet</title>
+  <title>Ex1 - Terre 3D + Espace + Drapeaux nets</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     html, body {margin:0; height:100%; overflow:hidden;}
     #app {position:relative; width:100%; height:100%;}
     #renderCanvas {width:100%; height:100%; touch-action:none;}
     #hud {position:absolute; left:10px; top:10px; background:rgba(0,0,0,.55); color:#fff; padding:6px 8px; border-radius:4px; font-family:sans-serif; font-size:13px; z-index:10;}
-    /* Mini-carte en bas à gauche */
-    #map {position:absolute; left:10px; bottom:10px; width:320px; height:220px; border:1px solid rgba(0,0,0,.2); z-index:9;}
-    /* pour pointer/coller du texte */
+    #map {position:absolute; left:10px; bottom:10px; width:320px; height:220px; border:1px solid rgba(255,255,255,.15); z-index:9;}
     .tag {position:absolute; right:10px; bottom:10px; background:rgba(0,0,0,.55); color:#fff; padding:4px 6px; border-radius:4px; font-family:sans-serif; font-size:12px;}
   </style>
-  <script src="https://cdn.babylonjs.com/babylon.js"></script>
 
-  <!-- Leaflet (CDN officiel) -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://cdn.babylonjs.com/babylon.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 </head>
 <body>
 <div id="app">
@@ -30,27 +27,89 @@
 
 <script>
 const canvas = document.getElementById("renderCanvas");
-const engine = new BABYLON.Engine(canvas, true);
+const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
 const hud = document.getElementById("hud");
 
+// -------------------------------------------------------------
+//  Utilitaires étoiles (fond espace)
+// -------------------------------------------------------------
+function createStarfield(scene) {
+  // Sphère géante rendue de l'intérieur
+  const sky = BABYLON.MeshBuilder.CreateSphere("starSky", {
+    diameter: 200,
+    segments: 32,
+    sideOrientation: BABYLON.Mesh.BACKSIDE
+  }, scene);
+  sky.isPickable = false;
+
+  // Texture dynamique avec des points aléatoires
+  const W = 2048, H = 1024;
+  const dyn = new BABYLON.DynamicTexture("starsTex", { width: W, height: H }, scene, false);
+  const ctx = dyn.getContext();
+  ctx.fillStyle = "black";
+  ctx.fillRect(0, 0, W, H);
+
+  // Dessin d'étoiles (intensités/tailles variées)
+  const stars = 2500;
+  for (let i = 0; i < stars; i++) {
+    const x = (Math.random() * W) | 0;
+    const y = (Math.random() * H) | 0;
+    const r = Math.random() * 1.4 + 0.3;
+    const c = 200 + (Math.random() * 55) | 0; // blanc légèrement variable
+    ctx.fillStyle = `rgb(${c},${c},${c})`;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  dyn.update(false);
+
+  const starMat = new BABYLON.StandardMaterial("starMat", scene);
+  starMat.disableLighting = true;                // non éclairé
+  starMat.emissiveTexture = dyn;                 // brille par elle-même
+  starMat.emissiveTexture.anisotropicFilteringLevel = 8;
+  starMat.backFaceCulling = false;
+
+  sky.material = starMat;
+  return sky;
+}
+
+// -------------------------------------------------------------
+//  Scène
+// -------------------------------------------------------------
 const createScene = () => {
   const scene = new BABYLON.Scene(engine);
 
-  // Caméra orbitale
-  const camera = new BABYLON.ArcRotateCamera("cam", -Math.PI/2, Math.PI/2.4, 3.0, BABYLON.Vector3.Zero(), scene);
+  // Fond noir "espace"
+  scene.clearColor = new BABYLON.Color4(0, 0, 0, 1);
+
+  // Caméra
+  const camera = new BABYLON.ArcRotateCamera(
+    "cam",
+    -Math.PI/2,
+    Math.PI/2.4,
+    3.0,
+    BABYLON.Vector3.Zero(),
+    scene
+  );
   camera.attachControl(canvas, true);
 
-  // Lumière
-  new BABYLON.HemisphericLight("light", new BABYLON.Vector3(0,1,0), scene);
+  // Éclairage doux (évite les zones cramées) + directionnelle légère pour relief
+  const hemi = new BABYLON.HemisphericLight("hemi", new BABYLON.Vector3(0,1,0), scene);
+  hemi.intensity = 0.6;
+  const sun = new BABYLON.DirectionalLight("sun", new BABYLON.Vector3(-1, 0.2, -0.6), scene);
+  sun.intensity = 0.8;
 
   // Terre
-  const earth = BABYLON.MeshBuilder.CreateSphere("earth", {diameter: 2.0, segments: 64}, scene);
-  const mat = new BABYLON.StandardMaterial("earthMat", scene);
-  mat.diffuseTexture = new BABYLON.Texture("assets/earth.jpg", scene);
-  mat.specularColor = new BABYLON.Color3(0,0,0);
-  earth.material = mat;
+  const earth = BABYLON.MeshBuilder.CreateSphere("earth", { diameter: 2.0, segments: 64 }, scene);
+  const earthMat = new BABYLON.StandardMaterial("earthMat", scene);
+  earthMat.diffuseTexture = new BABYLON.Texture("assets/earth.jpg", scene);
+  earthMat.specularColor = new BABYLON.Color3(0,0,0); // pas de spéculaire "plastique"
+  earth.material = earthMat;
 
-  // Utils lat/lon <-> XYZ
+  // Ciel étoilé (non éclairé)
+  createStarfield(scene);
+
+  // Conversion lat/lon <-> XYZ (lon=0 -> +Z ; 90E -> +X ; lat>0 -> +Y)
   const toRad = BABYLON.Tools.ToRadians;
   function latLonToVec3(latDeg, lonDeg, radius=1.0){
     const lat = toRad(latDeg), lon = toRad(lonDeg);
@@ -66,32 +125,46 @@ const createScene = () => {
     return { latDeg: BABYLON.Tools.ToDegrees(lat), lonDeg: BABYLON.Tools.ToDegrees(lon) };
   }
 
-  // “Pins” & drapeaux
+  // Pins simples
   function addPin(lat, lon, name, color=new BABYLON.Color3(1,0,0)){
     const pin = BABYLON.MeshBuilder.CreateSphere(name || "pin", {diameter: 0.03}, scene);
-    pin.material = new BABYLON.StandardMaterial("m_"+name, scene);
-    pin.material.emissiveColor = color;
+    const m = new BABYLON.StandardMaterial("m_"+name, scene);
+    m.emissiveColor = color;           // auto-éclairé pour rester visible
+    m.disableLighting = true;
+    pin.material = m;
     pin.position = latLonToVec3(lat, lon, 1.01);
     pin.metadata = { lat, lon, name: name || "pin" };
     return pin;
   }
+
+  // ★ Drapeaux nets et non éclairés
   function addFlag(lat, lon, name, flagUrl){
     const plane = BABYLON.MeshBuilder.CreatePlane("flag_"+name, {width:0.12, height:0.08}, scene);
     plane.position = latLonToVec3(lat, lon, 1.02);
     plane.billboardMode = BABYLON.AbstractMesh.BILLBOARDMODE_ALL;
+
     const m = new BABYLON.StandardMaterial("mat_"+name, scene);
-    m.emissiveTexture = new BABYLON.Texture(flagUrl, scene);
+    m.disableLighting = true; // ← ignore toute lumière (plus de zones blanches)
     m.backFaceCulling = false;
+    m.emissiveTexture = new BABYLON.Texture(flagUrl, scene, false, true, BABYLON.Texture.TRILINEAR_SAMPLINGMODE);
+    // Qualité nette même en oblique :
+    m.emissiveTexture.anisotropicFilteringLevel = 12;
+    // Évite des répétitions bizarres au pôle :
+    m.emissiveTexture.wrapU = BABYLON.Texture.CLAMP_ADDRESSMODE;
+    m.emissiveTexture.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
+    // Pas de blending inutile :
+    m.alphaMode = BABYLON.Engine.ALPHA_DISABLE;
+
     plane.material = m;
     plane.metadata = { lat, lon, name, isFlag:true };
     return plane;
   }
 
-  // Démo : Paris/NY
+  // Démo
   addPin(48.8566, 2.3522, "Paris", new BABYLON.Color3(0,1,0));
   addPin(40.7128, -74.0060, "NewYork", new BABYLON.Color3(0,0,1));
 
-  // Géolocalisation utilisateur (optionnelle)
+  // Géoloc (optionnelle)
   if ("geolocation" in navigator){
     navigator.geolocation.getCurrentPosition(
       (pos) => {
@@ -103,7 +176,7 @@ const createScene = () => {
     );
   }
 
-  // REST Countries → drapeaux
+  // REST Countries → drapeaux (toujours nets)
   fetch("https://restcountries.com/v3.1/all?fields=name,latlng,flags,cca2")
     .then(r => r.json())
     .then(countries => {
@@ -116,14 +189,14 @@ const createScene = () => {
       hud.textContent += " | Drapeaux OK";
     });
 
-  // --------- Aides de navigation caméra depuis lat/lon ----------
+  // Aide navigation : amener la caméra à une lat/lon
   function moveCameraToLatLon(lat, lon, dist=3.0){
     const p = latLonToVec3(lat, lon, dist);
     camera.setTarget(BABYLON.Vector3.Zero());
     camera.setPosition(p);
   }
 
-  // --------- Picking 3D → recadrer la carte ----------
+  // 3D -> carte : picking
   scene.onPointerObservable.add((pointerInfo) => {
     if (pointerInfo.type === BABYLON.PointerEventTypes.POINTERPICK){
       const pick = pointerInfo.pickInfo;
@@ -134,11 +207,9 @@ const createScene = () => {
           lon = pick.pickedMesh.metadata.lon;
           label = pick.pickedMesh.metadata.name || label;
         } else {
-          // clic sur la sphère : conversion XYZ → lat/lon
           const ll = vec3ToLatLon(pick.pickedPoint.normalize());
           lat = ll.latDeg; lon = ll.lonDeg;
         }
-        // Met à jour la mini-carte (définie plus bas)
         if (window.__leafletMap){
           window.__leafletMap.setView([lat, lon], Math.max(4, window.__leafletMap.getZoom()));
           if (window.__leafletMarker){
@@ -149,7 +220,12 @@ const createScene = () => {
     }
   });
 
-  // Expose pour le debug
+  // Rotation très légère de la Terre pour l’effet “vivant”
+  scene.onBeforeRenderObservable.add(() => {
+    earth.rotation.y += engine.getDeltaTime() * 0.00003;
+  });
+
+  // Expose outils
   scene.metadata = { latLonToVec3, vec3ToLatLon, moveCameraToLatLon, earth, camera };
   return scene;
 };
@@ -158,17 +234,14 @@ const scene = createScene();
 engine.runRenderLoop(() => scene.render());
 addEventListener("resize", () => engine.resize());
 
-// ------------- Leaflet : mini-carte + interactions -------------
+// ---------------- Leaflet ----------------
 const map = L.map('map', {zoomControl:true, attributionControl:false}).setView([0, 0], 2);
 window.__leafletMap = map;
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19
-}).addTo(map);
-
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 const marker = L.marker([0,0]).addTo(map).bindPopup('Centre');
 window.__leafletMarker = marker;
 
-// Carte → 3D : clic sur la carte = orienter la caméra
+// Carte -> 3D
 map.on('click', (e) => {
   const {lat, lng} = e.latlng;
   if (scene?.metadata?.moveCameraToLatLon){
