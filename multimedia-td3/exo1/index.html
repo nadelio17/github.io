@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>Ex1 - Terre 3D + Leaflet</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body {margin:0; height:100%; overflow:hidden;}
+    #app {position:relative; width:100%; height:100%;}
+    #renderCanvas {width:100%; height:100%; touch-action:none;}
+    #hud {position:absolute; left:10px; top:10px; background:rgba(0,0,0,.55); color:#fff; padding:6px 8px; border-radius:4px; font-family:sans-serif; font-size:13px; z-index:10;}
+    /* Mini-carte en bas à gauche */
+    #map {position:absolute; left:10px; bottom:10px; width:320px; height:220px; border:1px solid rgba(0,0,0,.2); z-index:9;}
+    /* pour pointer/coller du texte */
+    .tag {position:absolute; right:10px; bottom:10px; background:rgba(0,0,0,.55); color:#fff; padding:4px 6px; border-radius:4px; font-family:sans-serif; font-size:12px;}
+  </style>
+  <script src="https://cdn.babylonjs.com/babylon.js"></script>
+
+  <!-- Leaflet (CDN officiel) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+</head>
+<body>
+<div id="app">
+  <canvas id="renderCanvas"></canvas>
+  <div id="hud">Init…</div>
+  <div id="map"></div>
+  <div class="tag">Clic 3D = recadre carte • Clic carte = oriente caméra</div>
+</div>
+
+<script>
+const canvas = document.getElementById("renderCanvas");
+const engine = new BABYLON.Engine(canvas, true);
+const hud = document.getElementById("hud");
+
+const createScene = () => {
+  const scene = new BABYLON.Scene(engine);
+
+  // Caméra orbitale
+  const camera = new BABYLON.ArcRotateCamera("cam", -Math.PI/2, Math.PI/2.4, 3.0, BABYLON.Vector3.Zero(), scene);
+  camera.attachControl(canvas, true);
+
+  // Lumière
+  new BABYLON.HemisphericLight("light", new BABYLON.Vector3(0,1,0), scene);
+
+  // Terre
+  const earth = BABYLON.MeshBuilder.CreateSphere("earth", {diameter: 2.0, segments: 64}, scene);
+  const mat = new BABYLON.StandardMaterial("earthMat", scene);
+  mat.diffuseTexture = new BABYLON.Texture("assets/earth.jpg", scene);
+  mat.specularColor = new BABYLON.Color3(0,0,0);
+  earth.material = mat;
+
+  // Utils lat/lon <-> XYZ
+  const toRad = BABYLON.Tools.ToRadians;
+  function latLonToVec3(latDeg, lonDeg, radius=1.0){
+    const lat = toRad(latDeg), lon = toRad(lonDeg);
+    const x = radius * Math.cos(lat) * Math.sin(lon);
+    const y = radius * Math.sin(lat);
+    const z = radius * Math.cos(lat) * Math.cos(lon);
+    return new BABYLON.Vector3(x, y, z);
+  }
+  function vec3ToLatLon(v){
+    const r = Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
+    const lat = Math.asin(v.y / r);
+    const lon = Math.atan2(v.x, v.z);
+    return { latDeg: BABYLON.Tools.ToDegrees(lat), lonDeg: BABYLON.Tools.ToDegrees(lon) };
+  }
+
+  // “Pins” & drapeaux
+  function addPin(lat, lon, name, color=new BABYLON.Color3(1,0,0)){
+    const pin = BABYLON.MeshBuilder.CreateSphere(name || "pin", {diameter: 0.03}, scene);
+    pin.material = new BABYLON.StandardMaterial("m_"+name, scene);
+    pin.material.emissiveColor = color;
+    pin.position = latLonToVec3(lat, lon, 1.01);
+    pin.metadata = { lat, lon, name: name || "pin" };
+    return pin;
+  }
+  function addFlag(lat, lon, name, flagUrl){
+    const plane = BABYLON.MeshBuilder.CreatePlane("flag_"+name, {width:0.12, height:0.08}, scene);
+    plane.position = latLonToVec3(lat, lon, 1.02);
+    plane.billboardMode = BABYLON.AbstractMesh.BILLBOARDMODE_ALL;
+    const m = new BABYLON.StandardMaterial("mat_"+name, scene);
+    m.emissiveTexture = new BABYLON.Texture(flagUrl, scene);
+    m.backFaceCulling = false;
+    plane.material = m;
+    plane.metadata = { lat, lon, name, isFlag:true };
+    return plane;
+  }
+
+  // Démo : Paris/NY
+  addPin(48.8566, 2.3522, "Paris", new BABYLON.Color3(0,1,0));
+  addPin(40.7128, -74.0060, "NewYork", new BABYLON.Color3(0,0,1));
+
+  // Géolocalisation utilisateur (optionnelle)
+  if ("geolocation" in navigator){
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const {latitude, longitude} = pos.coords;
+        addPin(latitude, longitude, "Moi", new BABYLON.Color3(1,1,0));
+        hud.textContent = `Ta position : ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+      },
+      () => hud.textContent = "Géoloc refusée"
+    );
+  }
+
+  // REST Countries → drapeaux
+  fetch("https://restcountries.com/v3.1/all?fields=name,latlng,flags,cca2")
+    .then(r => r.json())
+    .then(countries => {
+      countries.forEach(c => {
+        if (c.latlng && c.flags && c.flags.png){
+          const [lat, lon] = c.latlng;
+          addFlag(lat, lon, c.name?.common || c.cca2, c.flags.png);
+        }
+      });
+      hud.textContent += " | Drapeaux OK";
+    });
+
+  // --------- Aides de navigation caméra depuis lat/lon ----------
+  function moveCameraToLatLon(lat, lon, dist=3.0){
+    const p = latLonToVec3(lat, lon, dist);
+    camera.setTarget(BABYLON.Vector3.Zero());
+    camera.setPosition(p);
+  }
+
+  // --------- Picking 3D → recadrer la carte ----------
+  scene.onPointerObservable.add((pointerInfo) => {
+    if (pointerInfo.type === BABYLON.PointerEventTypes.POINTERPICK){
+      const pick = pointerInfo.pickInfo;
+      if (pick?.hit && pick.pickedPoint){
+        let lat, lon, label = "Point";
+        if (pick.pickedMesh?.metadata?.lat != null){
+          lat = pick.pickedMesh.metadata.lat;
+          lon = pick.pickedMesh.metadata.lon;
+          label = pick.pickedMesh.metadata.name || label;
+        } else {
+          // clic sur la sphère : conversion XYZ → lat/lon
+          const ll = vec3ToLatLon(pick.pickedPoint.normalize());
+          lat = ll.latDeg; lon = ll.lonDeg;
+        }
+        // Met à jour la mini-carte (définie plus bas)
+        if (window.__leafletMap){
+          window.__leafletMap.setView([lat, lon], Math.max(4, window.__leafletMap.getZoom()));
+          if (window.__leafletMarker){
+            window.__leafletMarker.setLatLng([lat, lon]).setPopupContent(label).openPopup();
+          }
+        }
+      }
+    }
+  });
+
+  // Expose pour le debug
+  scene.metadata = { latLonToVec3, vec3ToLatLon, moveCameraToLatLon, earth, camera };
+  return scene;
+};
+
+const scene = createScene();
+engine.runRenderLoop(() => scene.render());
+addEventListener("resize", () => engine.resize());
+
+// ------------- Leaflet : mini-carte + interactions -------------
+const map = L.map('map', {zoomControl:true, attributionControl:false}).setView([0, 0], 2);
+window.__leafletMap = map;
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19
+}).addTo(map);
+
+const marker = L.marker([0,0]).addTo(map).bindPopup('Centre');
+window.__leafletMarker = marker;
+
+// Carte → 3D : clic sur la carte = orienter la caméra
+map.on('click', (e) => {
+  const {lat, lng} = e.latlng;
+  if (scene?.metadata?.moveCameraToLatLon){
+    scene.metadata.moveCameraToLatLon(lat, lng, 3.0);
+  }
+  marker.setLatLng([lat, lng]).setPopupContent(`Carte: ${lat.toFixed(3)}, ${lng.toFixed(3)}`).openPopup();
+});
+</script>
+</body>
+</html>
