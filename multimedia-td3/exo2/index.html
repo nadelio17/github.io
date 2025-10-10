@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
+  <title>Exo 2 — AR géolocalisée</title>
+
+  <!-- Versions compatibles: A-Frame 1.2.0 (Three r125) + AR.js 3.3.2 -->
+  <script src="https://aframe.io/releases/1.2.0/aframe.min.js"></script>
+  <script src="https://rawcdn.githack.com/AR-js-org/AR.js/3.3.2/aframe/build/aframe-ar.js"></script>
+
+  <style>
+    html,body{margin:0;height:100%;overflow:hidden;background:#000}
+    #hud{position:fixed;left:8px;top:8px;right:8px;display:flex;gap:8px;flex-wrap:wrap;z-index:5;pointer-events:none;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+    .pill{pointer-events:auto;background:rgba(0,0,0,.55);color:#fff;padding:8px 10px;border-radius:10px;font-size:12px;backdrop-filter:blur(4px)}
+    .ok{background:rgba(0,150,60,.65)} .warn{background:rgba(180,125,0,.65)} .err{background:rgba(150,0,0,.65)}
+    #cta{position:fixed;left:50%;transform:translateX(-50%);bottom:16px;z-index:6}
+    #cta button{padding:10px 14px;border-radius:10px;border:0;background:#0b5fff;color:#fff;font-weight:600}
+  </style>
+</head>
+<body>
+
+  <!-- HUD -->
+  <div id="hud">
+    <div class="pill" id="gps">GPS : …</div>
+    <div class="pill" id="head">Cap : …</div>
+    <div class="pill" id="status">Caméra : …</div>
+    <div class="pill" id="compassWrap" style="display:none;align-items:center;gap:6px">
+      <span>Cap</span>
+      <canvas id="compass" width="32" height="32" style="display:block"></canvas>
+    </div>
+  </div>
+  <!-- Bouton iOS pour activer les capteurs -->
+  <div id="cta" hidden>
+    <button id="enableSensors">Activer l’orientation</button>
+  </div>
+  <div id="actions" style="position:fixed;left:50%;transform:translateX(-50%);bottom:16px;display:flex;gap:8px;z-index:7">
+    <button id="spawnAround" style="padding:10px 12px;border-radius:10px;border:0;background:#222;color:#fff">POI proches</button>
+  </div>
+
+  <!-- NOTE: Camera requires a secure origin. Use https (e.g., ngrok) on phone, or http://localhost on desktop. Accessing via LAN IP (http://192.168.x.x) will be blocked by Chrome. -->
+  <a-scene
+    renderer="colorManagement:true;physicallyCorrectLights:true"
+    embedded
+    vr-mode-ui="enabled:false"
+    arjs="sourceType: webcam; videoTexture: true; debugUIEnabled: false; trackingMethod: best;"
+    device-orientation-permission-ui="enabled:false"
+  >
+    <!-- Caméra AR avec GPS -->
+    <a-camera gps-camera rotation-reader></a-camera>
+
+    <!-- Un “pin” à ta position (+ léger offset nord pour qu’il soit visible) -->
+    <a-entity id="youPin" gps-entity-place="latitude:0; longitude:0;" visible="false">
+      <a-sphere radius="2" color="#00ffa8" opacity="0.85"></a-sphere>
+      <a-text value="Vous" color="#002b22" align="center" position="0 2.8 0" look-at="[gps-camera]" side="double"></a-text>
+    </a-entity>
+
+  </a-scene>
+
+  <script>
+    // ---------- iOS: demande d’accès aux capteurs d’orientation ----------
+    (function setupiOS(){
+      const needsPermission = typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function';
+      const btnWrap = document.getElementById('cta');
+      if(needsPermission){
+        btnWrap.hidden = false;
+        document.getElementById('enableSensors').onclick = async () => {
+          try{
+            const r = await DeviceOrientationEvent.requestPermission();
+            if(r === 'granted'){ btnWrap.hidden = true; }
+          }catch(e){ console.warn('Orientation permission error', e); }
+        };
+      }
+    })();
+
+    // ---------- HUD (GPS / Heading / Camera) ----------
+    const gpsHud = document.getElementById('gps');
+    const headHud = document.getElementById('head');
+    const camHud = document.getElementById('status');
+
+    // ==== Helpers: distance, offsets, POI registry ====
+    function haversine(lat1, lon1, lat2, lon2){
+      const R = 6371000; // m
+      const toRad = Math.PI/180;
+      const dLat = (lat2-lat1)*toRad;
+      const dLon = (lon2-lon1)*toRad;
+      const a = Math.sin(dLat/2)**2 + Math.cos(lat1*toRad)*Math.cos(lat2*toRad)*Math.sin(dLon/2)**2;
+      return 2*R*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    }
+    function offsetMeters(lat, lon, dNorth, dEast){
+      const lat2 = lat + dNorth/111320; // m -> deg
+      const lon2 = lon + dEast/(111320*Math.cos(lat*Math.PI/180));
+      return {lat:lat2, lon:lon2};
+    }
+    const pois = []; // {el, lat, lon, label}
+    function addPoi(lat, lon, label, color){
+      const e = document.createElement('a-entity');
+      e.setAttribute('gps-entity-place', `latitude:${lat}; longitude:${lon}`);
+      e.innerHTML = `
+        <a-box depth="3" height="3" width="3" color="${color||'#ff3b30'}"></a-box>
+        <a-text value="${label}" align="center" position="0 2.6 0" side="double" look-at="[gps-camera]"></a-text>
+        <a-text class="dist" value="" align="center" position="0 -2.2 0" side="double" look-at="[gps-camera]"></a-text>
+      `;
+      document.querySelector('a-scene').appendChild(e);
+      pois.push({el:e, lat, lon, label});
+      return e;
+    }
+    function updatePoiDistances(lat, lon){
+      for(const p of pois){
+        const d = haversine(lat, lon, p.lat, p.lon);
+        const t = p.el.querySelector('.dist');
+        if (t) t.setAttribute('value', `${Math.round(d)} m`);
+      }
+    }
+
+    // Option: silence noisy AR.js warning when desktop has no compass
+    (function(){
+      const _warn = console.warn;
+      console.warn = function(...args){
+        if (args && args[0] && String(args[0]).includes('event.alpha === null')) return; // drop
+        return _warn.apply(console, args);
+      };
+    })();
+
+    // Boussole (approx): iOS => webkitCompassHeading, sinon alpha (desktop peut renvoyer null)
+    const compassWrap = document.getElementById('compassWrap');
+    const compass = document.getElementById('compass');
+    const ctx = compass.getContext('2d');
+    function drawCompass(angle){
+      const c = compass; const r = c.width/2; const cx = r, cy = r;
+      ctx.clearRect(0,0,c.width,c.height);
+      ctx.beginPath(); ctx.arc(cx,cy,r-1,0,Math.PI*2); ctx.strokeStyle='#fff'; ctx.lineWidth=2; ctx.stroke();
+      // needle
+      const a = (angle-90)*Math.PI/180; // point up at 0°
+      const x2 = cx + Math.cos(a)*(r-4), y2 = cy + Math.sin(a)*(r-4);
+      ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(x2,y2); ctx.lineWidth=2; ctx.strokeStyle='#ff3b30'; ctx.stroke();
+    }
+    window.addEventListener('deviceorientation', (e)=>{
+      let a = null;
+      if (e) {
+        if (typeof e.webkitCompassHeading === 'number') a = e.webkitCompassHeading; // iOS
+        else if (typeof e.alpha === 'number') a = 360 - e.alpha;                     // autres
+      }
+      if (a == null || Number.isNaN(a)){
+        headHud.textContent = 'Cap : n/a';
+        headHud.style.display = 'none';
+        compassWrap.style.display = 'none';
+      } else {
+        headHud.style.display = '';
+        headHud.textContent = 'Cap : ' + a.toFixed(0) + '°';
+        compassWrap.style.display = 'flex';
+        drawCompass(a);
+      }
+    });
+
+    const youPin = document.getElementById('youPin');
+    function placeYou(lat, lon){
+      // décalage de ~8 m au nord pour ne pas être exactement sur la caméra
+      const dLat = 8 / 111320; // m -> degrés latitude
+      youPin.setAttribute('gps-entity-place', `latitude:${lat + dLat}; longitude:${lon}`);
+      youPin.setAttribute('visible', 'true');
+    }
+
+    const cam = document.querySelector('[gps-camera]');
+    const scene = document.querySelector('a-scene');
+    function setCamStatus(ok, msg){
+      camHud.className = 'pill ' + (ok ? 'ok' : 'err');
+      camHud.textContent = 'Caméra : ' + (msg || (ok ? 'OK' : 'refusée'));
+    }
+    let gotGPS = false;
+    let lastPos = null;
+
+    // GPS ok -> affiche coord + précision et place "Vous"
+    cam.addEventListener('gps-camera-update-position', e=>{
+      const {position, accuracy} = e.detail;
+      gpsHud.className = 'pill ' + (accuracy<=20?'ok':accuracy<=60?'warn':'');
+      gpsHud.textContent = `GPS : ${position.latitude.toFixed(5)}, ${position.longitude.toFixed(5)} (±${Math.round(accuracy)} m)`;
+      placeYou(position.latitude, position.longitude);
+      gotGPS = true;
+      lastPos = {lat: position.latitude, lon: position.longitude};
+      updatePoiDistances(lastPos.lat, lastPos.lon);
+    });
+
+    // Fallback: si AR.js ne fournit pas la position (ex: desktop ou permission), on tente via navigator.geolocation
+    setTimeout(()=>{
+      if (!gotGPS && 'geolocation' in navigator) {
+        navigator.geolocation.getCurrentPosition((pos)=>{
+          const { latitude, longitude, accuracy } = pos.coords;
+          gpsHud.className = 'pill ' + (accuracy<=20?'ok':accuracy<=60?'warn':'');
+          gpsHud.textContent = `GPS : ${latitude.toFixed(5)}, ${longitude.toFixed(5)} (±${Math.round(accuracy||0)} m)`;
+          placeYou(latitude, longitude);
+          lastPos = {lat: latitude, lon: longitude};
+          updatePoiDistances(lastPos.lat, lastPos.lon);
+        }, (err)=>{
+          gpsHud.className = 'pill err';
+          gpsHud.textContent = 'GPS : refusé';
+          console.warn('geolocation error', err);
+        }, { enableHighAccuracy:true, timeout:6000, maximumAge:30000 });
+      }
+    }, 5000);
+
+    // Flux vidéo prêt ? (AR.js émet souvent l'event sur la scène)
+    ['arjs-video-loaded','arjs-video-init'].forEach(ev=>{
+      scene.addEventListener(ev, ()=> setCamStatus(true));
+      window.addEventListener(ev, ()=> setCamStatus(true));
+    });
+    scene.addEventListener('camera-error', ()=> setCamStatus(false));
+    cam.addEventListener('camera-error',   ()=> setCamStatus(false));
+
+    // Poll de secours : si le <video> est prêt on marque la caméra OK
+    setTimeout(function poll(){
+      const v = document.querySelector('video');
+      if (v && v.readyState >= 2) setCamStatus(true);
+      else setTimeout(poll, 700);
+    }, 700);
+
+    // Spawn 4 POI proches (50–150 m) autour de moi
+    document.getElementById('spawnAround').addEventListener('click', ()=>{
+      if(!lastPos){ alert('GPS pas encore prêt.'); return; }
+      const {lat, lon} = lastPos;
+      const pts = [
+        {off:[  80,   0], label:'Nord'},
+        {off:[   0, 120], label:'Est',  color:'#ffd60a'},
+        {off:[-100,  40], label:'Sud-Ouest', color:'#34c759'},
+        {off:[  60,-140], label:'Nord-Ouest', color:'#0aa0ff'}
+      ];
+      for(const p of pts){
+        const o = offsetMeters(lat, lon, p.off[0], p.off[1]);
+        addPoi(o.lat, o.lon, p.label, p.color);
+      }
+      updatePoiDistances(lat, lon);
+    });
+  </script>
+</body>
+</html>
