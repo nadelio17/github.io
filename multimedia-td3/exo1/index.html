@@ -13,7 +13,17 @@
       backdrop-filter: blur(4px);
     }
     #hud a { color: #8ec7ff; text-decoration: none; }
+    #map {
+      position: fixed;
+      left: 12px; bottom: 12px;
+      width: min(32vw, 420px);
+      height: min(32vh, 280px);
+      border-radius: 10px; overflow: hidden;
+      box-shadow: 0 8px 24px rgba(0,0,0,.35);
+      z-index: 10;
+    }
   </style>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
 </head>
 <body>
   <div id="app"></div>
@@ -21,7 +31,9 @@
     <div><strong>Contrôles :</strong> clic & drag = orbiter, molette = zoom</div>
     <div>Ta position = <span id="you">…</span></div>
   </div>
+  <div id="map"></div>
 
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <!-- Three.js (module) + OrbitControls depuis un CDN fiable -->
   <script type="module">
     import * as THREE from 'https://esm.sh/three@0.160.0';
@@ -52,6 +64,124 @@
     controls.enablePan = false;         // empêche le décalage latéral
     controls.target.set(0, 0, 0);       // cible = centre du globe
     camera.lookAt(0, 0, 0);
+
+    // === Leaflet mini-carte ===
+    const map = L.map('map', { zoomControl: true, attributionControl: false }).setView([20, 0], 2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 6 }).addTo(map);
+    let lMarker = null;
+    function setMapFocus(lat, lon, zoom = 4){
+      if (lMarker) lMarker.setLatLng([lat, lon]);
+      else lMarker = L.marker([lat, lon]).addTo(map);
+      map.setView([lat, lon], zoom, { animate: true });
+    }
+    // Carte -> 3D : clic sur la carte recadre le globe
+    map.on('click', (e) => {
+      const { lat, lng } = e.latlng;
+      focusOn(lat, lng);
+      setMapFocus(lat, lng, 4);
+    });
+
+    let autoRotate = true;
+
+    // === Picking (raycaster) ===
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    let hovered = null;
+
+    function onClick(event){
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+      const intersects = raycaster.intersectObjects(globeGroup.children, true);
+      const spriteHit = intersects.find(i => i.object.isSprite);
+      if (spriteHit){
+        const { lat, lon } = spriteHit.object.userData || {};
+        if (typeof lat === 'number' && typeof lon === 'number'){
+          focusOn(lat, lon);
+          setMapFocus(lat, lon, 4);
+          return;
+        }
+      }
+      // sinon: clic sur la surface du globe
+      const globeHit = intersects.find(i => i.object === globe);
+      if (globeHit){
+        const local = globeHit.point.clone();      // point en monde
+        globe.worldToLocal(local);                 // -> espace local du globe
+        const { lat, lon } = vec3ToLatLon(local);
+        focusOn(lat, lon); // centre l'écran sur le point cliqué
+        setMapFocus(lat, lon, 4);
+      }
+    }
+    renderer.domElement.addEventListener('click', onClick);
+
+    function onMove(event){
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+      const intersects = raycaster.intersectObjects(globeGroup.children, true);
+      const hit = intersects.find(i => i.object.isSprite);
+      renderer.domElement.style.cursor = hit ? 'pointer' : 'default';
+    }
+    renderer.domElement.addEventListener('mousemove', onMove);
+
+    // Centre la planète sur une lat/lon (amène le pays au centre de l'écran)
+    const DEG2RAD = Math.PI / 180; 
+    const RAD2DEG = 180 / Math.PI;
+    function vec3ToLatLon(v){
+      const n = v.clone().normalize();
+      const y = Math.min(1, Math.max(-1, n.y)); // clamp pour éviter asin hors domaine
+      const lat = Math.asin(y) * RAD2DEG;           // φ
+      const lon = Math.atan2(-n.z, n.x) * RAD2DEG;  // λ (cohérent avec z = -cosφ * sinλ)
+      return { lat, lon };
+    }// (si déjà défini plus bas, ce doublon sera ignoré par l'éditeur JS)
+    function focusOn(latDeg, lonDeg){
+      // Aligne le point (lat,lon) avec la direction de vue de la caméra
+      const pLocal = latLonToVector3(latDeg, lonDeg, 1).normalize();
+      // direction de ce point dans le monde avec l'orientation actuelle
+      const pWorld = pLocal.clone().applyQuaternion(globeGroup.quaternion).normalize();
+      // direction de vue réelle de la caméra (de la caméra vers la cible des contrôles)
+      const vd = controls.target.clone().sub(camera.position).normalize();
+      const viewDir = (pWorld.dot(vd) < 0) ? vd.negate() : vd; // évite l'antipode
+      // quaternion Delta qui aligne pWorld -> viewDir
+      const qDelta = new THREE.Quaternion().setFromUnitVectors(pWorld, viewDir);
+      // quaternion cible = qDelta * qCurrent
+      const startQ = globeGroup.quaternion.clone();
+      const targetQ = startQ.clone().premultiply(qDelta);
+
+      // --- Roll correction: keep North up (align globe's geographic North with screen-up) ---
+      const worldUp = new THREE.Vector3(0, 1, 0);
+      // tangent vers le Nord au point AVANT qDelta (dans le monde)
+      const n_pre = pWorld.clone();
+      const northTan_pre = worldUp.clone().sub(n_pre.clone().multiplyScalar(worldUp.dot(n_pre))).normalize();
+      // applique qDelta à ce tangent pour obtenir le tangent Nord APRÈS recentrage
+      const northTan_after = northTan_pre.clone().applyQuaternion(qDelta).normalize();
+      // up écran = up caméra projeté sur le plan perpendiculaire à la direction de vue
+      const vdNorm = viewDir.clone().normalize();
+      const projUp = camera.up.clone().sub(vdNorm.clone().multiplyScalar(camera.up.dot(vdNorm))).normalize();
+      // angle SIGNÉ pour faire coïncider northTan_after -> projUp autour de l'axe vdNorm
+      const crossNP = new THREE.Vector3().crossVectors(northTan_after, projUp);
+      const dotNP = THREE.MathUtils.clamp(northTan_after.dot(projUp), -1, 1);
+      const ang = Math.atan2(crossNP.dot(vdNorm), dotNP);
+      const qRoll = new THREE.Quaternion().setFromAxisAngle(vdNorm, ang);
+      const finalQ = targetQ.clone().premultiply(qRoll);
+
+      const duration = 800; // ms
+      const t0 = performance.now();
+      const prevEnabled = controls.enabled;
+      controls.enabled = false;
+
+      function easeInOutQuad(t){ return t<0.5 ? 2*t*t : -1+(4-2*t)*t; }
+
+      function animate(){
+        const t = Math.min(1, (performance.now()-t0)/duration);
+        const e = easeInOutQuad(t);
+        globeGroup.quaternion.slerpQuaternions(startQ, finalQ, e);
+        if (t < 1) requestAnimationFrame(animate); else controls.enabled = prevEnabled;
+      }
+      requestAnimationFrame(animate);
+    }
 
     // Ajuster la taille des drapeaux pour conserver une taille visuelle constante
     const baseScale = 0.035; // base plus petite
@@ -84,6 +214,7 @@
     globeMat.polygonOffsetFactor = 1;
     globeMat.polygonOffsetUnits = 1;
     const globe = new THREE.Mesh(globeGeo, globeMat);
+    globe.name = 'globe';
     globeGroup.add(globe);
 
     // Optionnel: étoiles (simple particule pour fond)
@@ -109,7 +240,6 @@
     //  - latitude φ (Sud–Nord) en degrés, longitude λ (Ouest–Est) en degrés
     //  - +Y = Nord, +X ≈ longitude 0° (Greenwich) quand lonOffset=0, +Z vers l'observateur
     //  - Pour coller à la texture equirectangulaire, on utilise z = -cosφ * sinλ
-    const DEG2RAD = Math.PI / 180;
     function latLonToVector3(latDeg, lonDeg, radius = RADIUS, lonOffsetDeg = 0){
       const phi = latDeg * DEG2RAD;                             // latitude
       const lambda = (lonDeg + lonOffsetDeg) * DEG2RAD;         // longitude
@@ -227,11 +357,13 @@
           const flag = await makeFlagSprite(c.flags?.png || c.flags?.svg || '');
           const up = pos.clone().normalize().multiplyScalar(0.015); // petit décalage radial anti z-fighting
           faceOutward(flag, pos.clone().add(up));
+          flag.userData.lat = lat;
+          flag.userData.lon = lon;
+          flag.userData.name = c.name?.common || '';
           // scene.add(flag);
           globeGroup.add(flag);
-
           // Facultatif: petite orbite pour une micro-animation
-          flag.userData = { basePos: pos.clone().add(up), t: Math.random()*Math.PI*2 };
+          // (supprimé)
         }
       } catch (e) {
         console.warn('Erreur RestCountries:', e);
@@ -243,19 +375,9 @@
     function tick(t){
       controls.target.set(0, 0, 0);
       controls.update();
-      globeGroup.rotation.y += 0.0006; // légère rotation de la Terre
+      // if (autoRotate) globeGroup.rotation.y += 0.0006; // légère rotation de la Terre
 
-      // swing subtil des drapeaux
-      scene.traverse(obj => {
-        if (obj.isSprite && obj.userData?.basePos){
-          obj.userData.t += 0.01;
-          const swing = Math.sin(obj.userData.t) * 0.01;
-          const n = obj.userData.basePos.clone().normalize();
-          const tangent = new THREE.Vector3().crossVectors(n, new THREE.Vector3(0,1,0)).normalize();
-          obj.position.copy(obj.userData.basePos.clone().add(tangent.multiplyScalar(swing)));
-          obj.lookAt(obj.position.clone().multiplyScalar(2));
-        }
-      });
+      // swing subtil des drapeaux (supprimé)
 
       updateFlagScales();
 
