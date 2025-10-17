@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>chasseur-tie Space Flight - TD4</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+            background: #000;
+            color: #fff;
+        }
+
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+
+        /* HUD - Interface utilisateur */
+        #hud {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        #score-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 20, 40, 0.8);
+            padding: 15px 25px;
+            border: 2px solid #00ffff;
+            border-radius: 5px;
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+        }
+
+        #score-panel h2 {
+            color: #00ffff;
+            font-size: 14px;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        #score-panel div {
+            font-size: 18px;
+            margin: 5px 0;
+        }
+
+        .stat-label {
+            color: #00aaff;
+            display: inline-block;
+            width: 120px;
+        }
+
+        .stat-value {
+            color: #fff;
+            font-weight: bold;
+        }
+
+        #health-bar {
+            width: 200px;
+            height: 20px;
+            background: rgba(100, 0, 0, 0.5);
+            border: 2px solid #ff0000;
+            margin-top: 10px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        #health-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #ff0000, #ff6600);
+            width: 100%;
+            transition: width 0.3s ease;
+        }
+
+        #controls-panel {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0, 20, 40, 0.8);
+            padding: 15px 25px;
+            border: 2px solid #00ff00;
+            border-radius: 5px;
+            box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
+            font-size: 12px;
+        }
+
+        #controls-panel h3 {
+            color: #00ff00;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        #controls-panel div {
+            margin: 5px 0;
+            color: #aaffaa;
+        }
+
+        .key {
+            background: rgba(0, 255, 0, 0.2);
+            padding: 2px 8px;
+            border: 1px solid #00ff00;
+            border-radius: 3px;
+            font-weight: bold;
+            color: #fff;
+        }
+
+        /* Écran de démarrage */
+        #start-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.95);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 200;
+            pointer-events: all;
+        }
+
+        #start-screen.hidden {
+            display: none;
+        }
+
+        #start-screen h1 {
+            font-size: 64px;
+            color: #00ffff;
+            text-shadow: 0 0 30px rgba(0, 255, 255, 0.8);
+            margin-bottom: 30px;
+            letter-spacing: 8px;
+        }
+
+        #start-screen p {
+            font-size: 20px;
+            color: #aaffff;
+            margin: 10px 0;
+            max-width: 600px;
+            text-align: center;
+            line-height: 1.6;
+        }
+
+        #start-btn {
+            margin-top: 40px;
+            padding: 15px 50px;
+            font-size: 24px;
+            background: linear-gradient(135deg, #00ffff, #0088ff);
+            border: none;
+            border-radius: 5px;
+            color: #000;
+            font-weight: bold;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.6);
+            transition: all 0.3s ease;
+            pointer-events: all;
+        }
+
+        #start-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 50px rgba(0, 255, 255, 1);
+        }
+
+        /* Écran de game over */
+        #gameover-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(100, 0, 0, 0.95);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 200;
+            pointer-events: all;
+        }
+
+        #gameover-screen.hidden {
+            display: none;
+        }
+
+        #gameover-screen h1 {
+            font-size: 72px;
+            color: #ff0000;
+            text-shadow: 0 0 40px rgba(255, 0, 0, 0.8);
+            margin-bottom: 30px;
+            letter-spacing: 8px;
+        }
+
+        #gameover-screen p {
+            font-size: 24px;
+            color: #ffaaaa;
+            margin: 10px 0;
+        }
+
+        #restart-btn {
+            margin-top: 30px;
+            padding: 15px 50px;
+            font-size: 20px;
+            background: linear-gradient(135deg, #ff0000, #ff6600);
+            border: none;
+            border-radius: 5px;
+            color: #fff;
+            font-weight: bold;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            box-shadow: 0 0 30px rgba(255, 0, 0, 0.6);
+            transition: all 0.3s ease;
+        }
+
+        #restart-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 50px rgba(255, 0, 0, 1);
+        }
+
+        /* Crosshair central */
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 40px;
+            height: 40px;
+            border: 2px solid rgba(0, 255, 0, 0.5);
+            border-radius: 50%;
+            pointer-events: none;
+        }
+
+        #crosshair::before,
+        #crosshair::after {
+            content: '';
+            position: absolute;
+            background: rgba(0, 255, 0, 0.5);
+        }
+
+        #crosshair::before {
+            width: 2px;
+            height: 20px;
+            left: 50%;
+            top: -10px;
+            transform: translateX(-50%);
+        }
+
+        #crosshair::after {
+            height: 2px;
+            width: 20px;
+            top: 50%;
+            left: -10px;
+            transform: translateY(-50%);
+        }
+
+        /* Messages temporaires */
+        #message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 48px;
+            color: #ffff00;
+            text-shadow: 0 0 20px rgba(255, 255, 0, 0.8);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+            z-index: 150;
+        }
+
+        #message.show {
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+    <div id="canvas-container"></div>
+
+    <!-- HUD -->
+    <div id="hud">
+        <div id="score-panel">
+            <h2>Mission Status</h2>
+            <div><span class="stat-label">Score:</span><span class="stat-value" id="score">0</span></div>
+            <div><span class="stat-label">Distance:</span><span class="stat-value" id="distance">0</span> km</div>
+            <div><span class="stat-label">Vitesse:</span><span class="stat-value" id="speed">0</span> km/s</div>
+            <div><span class="stat-label">Astéroïdes évités:</span><span class="stat-value" id="asteroids">0</span></div>
+            <div id="combo-display" style="margin-top: 8px; display: none;">
+                <span class="stat-label" style="color: #ffaa00;">COMBO:</span>
+                <span class="stat-value" id="combo" style="color: #ffff00; font-size: 24px;">0</span>
+                <span style="color: #ffaa00;">x</span>
+            </div>
+            <div style="margin-top: 10px;">
+                <span class="stat-label">Intégrité:</span>
+                <div id="health-bar">
+                    <div id="health-fill"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="controls-panel">
+            <h3>Contrôles</h3>
+            <div><span class="key">↑ Z</span> Piquer</div>
+            <div><span class="key">↓ S</span> Cabrer</div>
+            <div><span class="key">← Q</span> Gauche</div>
+            <div><span class="key">→ D</span> Droite</div>
+            <div><span class="key">A E</span> Roulis ↺↻</div>
+            <div><span class="key">Shift</span> Boost</div>
+            <div><span class="key">Space</span> Frein</div>
+        </div>
+
+        <div id="crosshair"></div>
+        <div id="message"></div>
+    </div>
+
+    <!-- Écran de démarrage -->
+    <div id="start-screen">
+        <h1>chasseur-tie SPACE FLIGHT</h1>
+        <p>Pilotez votre chasseur-tie à travers un champ d'astéroïdes dangereux.</p>
+        <p>Évitez les collisions et parcourez la plus grande distance possible !</p>
+        <p>La difficulté augmente avec le temps. Que la Force soit avec vous !</p>
+        <button id="start-btn">Démarrer Mission</button>
+    </div>
+
+    <!-- Écran de game over -->
+    <div id="gameover-screen" class="hidden">
+        <h1>MISSION ÉCHOUÉE</h1>
+        <p>Votre chasseur-tie a été détruit...</p>
+        <p>Score final: <span id="final-score">0</span></p>
+        <p>Distance parcourue: <span id="final-distance">0</span> km</p>
+        <p>Combo maximum: <span id="final-combo">0</span>x</p>
+        <button id="restart-btn">Nouvelle Mission</button>
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+
+    <script type="module" src="game.js"></script>
+</body>
+</html>
+

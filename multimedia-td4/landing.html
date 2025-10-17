@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>TD4 — chasseur-tie Space Flight</title>
+  <style>
+    body{font-family:system-ui,Arial,sans-serif;max-width:800px;margin:48px auto;padding:0 16px;background:#000;color:#fff}
+    a{display:block;padding:12px 16px;margin:12px 0;background:linear-gradient(135deg,#0066ff,#00ccff);border-radius:8px;text-decoration:none;color:#fff;font-weight:bold;transition:transform 0.2s}
+    a:hover{transform:scale(1.02)}
+    small{color:#aaa}
+    h1{color:#00ffff;text-shadow:0 0 20px rgba(0,255,255,0.5)}
+    h2{color:#00aaff;margin-top:32px}
+    ul{line-height:1.8}
+    .hero{background:linear-gradient(135deg,#001a33,#003366);padding:24px;border-radius:12px;margin:24px 0;border:2px solid #0066ff}
+    .feature{background:rgba(0,100,200,0.1);padding:16px;border-radius:8px;margin:12px 0;border-left:4px solid #00aaff}
+  </style>
+</head>
+<body>
+    <h1>🚀 TD 4 — chasseur-tie Space Flight</h1>
+    
+    <div class="hero">
+      <p style="font-size:18px;margin:0">
+        Un jeu 3D immersif développé avec Three.js où vous pilotez un vaisseau chasseur-tie 
+        à travers un champ d'astéroïdes dans l'espace. Évitez les collisions, battez 
+        votre record, et que la Force soit avec vous !
+      </p>
+    </div>
+
+    <a href="./index.html" target="_blank">🎮 JOUER MAINTENANT</a>
+
+    <h2>✨ Fonctionnalités principales</h2>
+    
+    <div class="feature">
+      <strong>🛸 Vaisseau chasseur-tie procédural</strong><br>
+      <small>Modèle 3D complet avec 4 ailes, cockpit, canons laser et réacteurs</small>
+    </div>
+
+    <div class="feature">
+      <strong>🎮 Contrôles immersifs</strong><br>
+      <small>Pilotage sur 6 axes (pitch, yaw, roll) avec boost et freinage</small>
+    </div>
+
+    <div class="feature">
+      <strong>☄️ Astéroïdes procéduraux</strong><br>
+      <small>Génération infinie avec géométries uniques et difficulté progressive</small>
+    </div>
+
+    <div class="feature">
+      <strong>📹 Caméra 3ème personne</strong><br>
+      <small>Suit le vaisseau avec interpolation lisse et cinématique</small>
+    </div>
+
+    <div class="feature">
+      <strong>💥 Effets visuels</strong><br>
+      <small>Particules de réacteurs, explosions, shake de caméra, skybox spatial</small>
+    </div>
+
+    <div class="feature">
+      <strong>🎯 Système de gameplay</strong><br>
+      <small>Score, santé, collisions, difficulté adaptative</small>
+    </div>
+
+    <h2>🎯 Contrôles du jeu</h2>
+    <ul>
+      <li><strong>Z / ↑</strong> — Piquer (descendre)</li>
+      <li><strong>S / ↓</strong> — Cabrer (monter)</li>
+      <li><strong>Q / ←</strong> — Tourner à gauche</li>
+      <li><strong>D / →</strong> — Tourner à droite</li>
+      <li><strong>A / E</strong> — Roulis gauche ↺ / droite ↻</li>
+      <li><strong>Shift</strong> — Boost (vitesse x2.5)</li>
+      <li><strong>Space</strong> — Frein</li>
+    </ul>
+
+    <h2>🛠️ Technologies & Concepts</h2>
+    <ul>
+      <li>Three.js (WebGL) — Rendu 3D temps réel</li>
+      <li>Géométries procédurales — Création dynamique d'objets</li>
+      <li>Systèmes de particules — Effets visuels avancés</li>
+      <li>Détection de collisions — AABB avec Box3</li>
+      <li>Interpolation — Mouvements fluides (lerp)</li>
+      <li>Quaternions — Rotations complexes</li>
+      <li>Game loop — Boucle de jeu optimisée</li>
+      <li>HUD dynamique — Interface utilisateur temps réel</li>
+    </ul>
+
+    <h2>📚 Documentation</h2>
+    <div class="feature">
+      Le projet inclut une documentation complète dans le fichier <strong>README.md</strong> 
+      avec détails techniques, architecture du code, et suggestions d'améliorations futures.
+    </div>
+
+    <a href="../" style="background:#333;color:#ccc;margin-top:32px">← Retour aux TD</a>
+</body>
+</html>
+

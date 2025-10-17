@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test - chasseur-tie Space Flight</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background: #000;
+            color: #0f0;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #0ff;
+            text-align: center;
+        }
+        .test-section {
+            background: #111;
+            border: 2px solid #0f0;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .test-section h2 {
+            color: #ff0;
+            margin-top: 0;
+        }
+        .status {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 3px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .status.ok {
+            background: #0f0;
+            color: #000;
+        }
+        .status.error {
+            background: #f00;
+            color: #fff;
+        }
+        .status.pending {
+            background: #ff0;
+            color: #000;
+        }
+        button {
+            background: #0ff;
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            font-weight: bold;
+            cursor: pointer;
+            border-radius: 5px;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0aa;
+        }
+        pre {
+            background: #000;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
+        }
+        .link {
+            color: #0ff;
+            text-decoration: none;
+            font-weight: bold;
+        }
+        .link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 chasseur-tie Space Flight - Test Suite</h1>
+
+    <div class="test-section">
+        <h2>📋 Checklist des fichiers</h2>
+        <div id="file-checks"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>🔧 Test de chargement Three.js</h2>
+        <div id="threejs-check"></div>
+        <button onclick="testThreeJS()">Tester Three.js</button>
+    </div>
+
+    <div class="test-section">
+        <h2>🎮 Test de la configuration</h2>
+        <div id="config-check"></div>
+        <button onclick="testConfig()">Tester Config</button>
+    </div>
+
+    <div class="test-section">
+        <h2>🚀 Lancer le jeu</h2>
+        <p>Si tous les tests ci-dessus sont ✅ OK, vous pouvez lancer le jeu !</p>
+        <button onclick="window.location.href='index.html'">🎮 JOUER</button>
+        <button onclick="window.location.href='landing.html'" style="background:#0a0">📄 Page de présentation</button>
+    </div>
+
+    <div class="test-section">
+        <h2>📚 Documentation</h2>
+        <p>
+            <a href="README.md" class="link" target="_blank">📖 README.md</a> - Documentation générale<br>
+            <a href="GUIDE.md" class="link" target="_blank">📘 GUIDE.md</a> - Guide développeur<br>
+            <a href="CHANGELOG.md" class="link" target="_blank">📝 CHANGELOG.md</a> - Historique des versions
+        </p>
+    </div>
+
+    <div class="test-section">
+        <h2>💻 Informations système</h2>
+        <div id="system-info"></div>
+    </div>
+
+    <script type="module">
+        // Test des fichiers
+        const files = [
+            'index.html',
+            'game.js',
+            'config.js',
+            'README.md',
+            'GUIDE.md',
+            'CHANGELOG.md',
+            'landing.html'
+        ];
+
+        async function checkFiles() {
+            const container = document.getElementById('file-checks');
+            let html = '<ul>';
+            
+            for (const file of files) {
+                try {
+                    const response = await fetch(file, { method: 'HEAD' });
+                    if (response.ok) {
+                        html += `<li>✅ ${file} <span class="status ok">OK</span></li>`;
+                    } else {
+                        html += `<li>❌ ${file} <span class="status error">MANQUANT</span></li>`;
+                    }
+                } catch (e) {
+                    html += `<li>❌ ${file} <span class="status error">ERREUR</span></li>`;
+                }
+            }
+            
+            html += '</ul>';
+            container.innerHTML = html;
+        }
+
+        // Test Three.js
+        window.testThreeJS = async function() {
+            const container = document.getElementById('threejs-check');
+            container.innerHTML = '<p>⏳ Chargement de Three.js...</p>';
+            
+            try {
+                const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js');
+                
+                if (THREE.Scene && THREE.PerspectiveCamera && THREE.WebGLRenderer) {
+                    container.innerHTML = `
+                        <p><span class="status ok">✅ OK</span></p>
+                        <p>Three.js chargé avec succès !</p>
+                        <pre>Version: r160
+Scene: ${typeof THREE.Scene}
+Camera: ${typeof THREE.PerspectiveCamera}
+Renderer: ${typeof THREE.WebGLRenderer}</pre>
+                    `;
+                } else {
+                    container.innerHTML = '<p><span class="status error">❌ ERREUR</span> Composants Three.js manquants</p>';
+                }
+            } catch (e) {
+                container.innerHTML = `<p><span class="status error">❌ ERREUR</span></p><pre>${e.message}</pre>`;
+            }
+        };
+
+        // Test config
+        window.testConfig = async function() {
+            const container = document.getElementById('config-check');
+            container.innerHTML = '<p>⏳ Chargement de la configuration...</p>';
+            
+            try {
+                const { GAME_CONFIG, DIFFICULTY_PRESETS } = await import('./config.js');
+                
+                if (GAME_CONFIG && GAME_CONFIG.ship && GAME_CONFIG.asteroids) {
+                    container.innerHTML = `
+                        <p><span class="status ok">✅ OK</span></p>
+                        <p>Configuration chargée avec succès !</p>
+                        <pre>Vitesse vaisseau: ${GAME_CONFIG.ship.speed}
+Taille astéroïdes: ${GAME_CONFIG.asteroids.minSize} - ${GAME_CONFIG.asteroids.maxSize}
+Santé de départ: ${GAME_CONFIG.game.startHealth}
+Presets disponibles: ${Object.keys(DIFFICULTY_PRESETS).join(', ')}</pre>
+                    `;
+                } else {
+                    container.innerHTML = '<p><span class="status error">❌ ERREUR</span> Configuration invalide</p>';
+                }
+            } catch (e) {
+                container.innerHTML = `<p><span class="status error">❌ ERREUR</span></p><pre>${e.message}</pre>`;
+            }
+        };
+
+        // Infos système
+        function displaySystemInfo() {
+            const container = document.getElementById('system-info');
+            container.innerHTML = `
+                <pre>Navigateur: ${navigator.userAgent}
+Résolution: ${window.screen.width}x${window.screen.height}
+Device Pixel Ratio: ${window.devicePixelRatio}
+WebGL disponible: ${(() => {
+    try {
+        const canvas = document.createElement('canvas');
+        return !!(canvas.getContext('webgl') || canvas.getContext('experimental-webgl'));
+    } catch(e) {
+        return false;
+    }
+})() ? 'Oui ✅' : 'Non ❌'}
+Langue: ${navigator.language}</pre>
+            `;
+        }
+
+        // Exécuter les tests au chargement
+        checkFiles();
+        displaySystemInfo();
+    </script>
+</body>
+</html>
+
